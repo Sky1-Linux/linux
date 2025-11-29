@@ -2191,11 +2191,11 @@
 };
 
 &ap_to_pm_scmi {
-	status = "okay";
+	status = "okay";  /* Mailbox SCMI - clocks, perf, sensors, pm_excp */
 };
 
 &ap_to_tfa_scmi {
-	status = "disabled";  /* Disable SMC SCMI - use mailbox SCMI only */
+	status = "okay";  /* SMC SCMI - power domains (genpd) */
 };
 
 &scmi_dvfs {
