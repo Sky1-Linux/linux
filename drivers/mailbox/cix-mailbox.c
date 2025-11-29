@@ -16,6 +16,13 @@
 /* Register define */
 #define REG_MSG(n)		(0x0 + 0x4*(n)) /* 0x0~0x7c */
 #define REG_DB_ACK		REG_MSG(CIX_MBOX_MSG_LEN) /* 0x80 */
+
+/*
+ * Some IO space is used by SCMI shared memory, if the DT reg address
+ * has bit 7 set (e.g., 0x6590080), we need to subtract this offset
+ * when accessing mailbox registers.
+ */
+#define CIX_SHMEM_OFFSET	0x80
 #define ERR_COMP		(REG_DB_ACK + 0x4) /* 0x84 */
 #define ERR_COMP_CLR		(REG_DB_ACK + 0x8) /* 0x88 */
 #define REG_F_INT(IDX)		(ERR_COMP_CLR + 0x4*(IDX+1)) /* 0x8c~0xa8 */
@@ -87,6 +94,7 @@ struct cix_mbox_priv {
 	int irq;
 	int dir;
 	bool tx_irq_mode; /* flag of enabling tx's irq mode */
+	bool use_shmem; /* true if DT reg overlaps with SCMI shmem */
 	void __iomem *base; /* region for mailbox */
 	unsigned int chan_num;
 	struct cix_mbox_con_priv con_priv[CIX_MBOX_CHANS];
@@ -101,12 +109,18 @@ static struct cix_mbox_priv *to_cix_mbox_priv(struct mbox_controller *mbox)
 
 static void cix_mbox_write(struct cix_mbox_priv *priv, u32 val, u32 offset)
 {
-	iowrite32(val, priv->base + offset);
+	if (priv->use_shmem)
+		iowrite32(val, priv->base + offset - CIX_SHMEM_OFFSET);
+	else
+		iowrite32(val, priv->base + offset);
 }
 
 static u32 cix_mbox_read(struct cix_mbox_priv *priv, u32 offset)
 {
-	return ioread32(priv->base + offset);
+	if (priv->use_shmem)
+		return ioread32(priv->base + offset - CIX_SHMEM_OFFSET);
+	else
+		return ioread32(priv->base + offset);
 }
 
 static bool mbox_fifo_empty(struct mbox_chan *chan)
@@ -552,6 +566,7 @@ static int cix_mbox_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct cix_mbox_priv *priv;
+	struct resource *res;
 	int ret;
 	u32 dir;
 
@@ -561,7 +576,20 @@ static int cix_mbox_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	priv->dev = dev;
-	priv->base = devm_platform_ioremap_resource(pdev, 0);
+
+	/* Get resource to check if shmem overlap applies */
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res)
+		return -ENODEV;
+
+	/*
+	 * Detect if the DT reg address has the SHMEM offset bit set.
+	 * If so, the first 0x80 bytes are used by SCMI shared memory,
+	 * and we need to adjust register offsets accordingly.
+	 */
+	priv->use_shmem = !!(res->start & CIX_SHMEM_OFFSET);
+
+	priv->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(priv->base))
 		return PTR_ERR(priv->base);
 
@@ -589,11 +617,12 @@ static int cix_mbox_probe(struct platform_device *pdev)
 	priv->mbox.txdone_irq = true;
 	priv->mbox.num_chans = CIX_MBOX_CHANS;
 	dev_info(priv->dev,
-		 "%s, base %px, irq %d, dir %d\n",
+		 "%s, base %px, irq %d, dir %d, use_shmem %d\n",
 		 __func__,
 		 priv->base,
 		 priv->irq,
-		 priv->dir);
+		 priv->dir,
+		 priv->use_shmem);
 
 	platform_set_drvdata(pdev, priv);
 	ret = devm_mbox_controller_register(dev, &priv->mbox);
