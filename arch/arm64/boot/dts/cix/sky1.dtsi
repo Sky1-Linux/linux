@@ -3390,20 +3390,19 @@
 			status = "disabled";
 		};
 
-		/* SCMI mailboxes - must be inside soc@0 for platform device creation */
-		/* Note: reg starts at offset 0x80 after shmem to avoid overlap */
-		mbox_ap2pm: mailbox@6590080 {
+		/* SCMI mailboxes - shmem overlaps first 0x80 bytes (intentional) */
+		mbox_ap2pm: mailbox@6590000 {
 			compatible = "cix,sky1-mbox";
-			reg = <0x0 0x06590080 0x0 0xff80>;
+			reg = <0x0 0x06590000 0x0 0x10000>;
 			interrupts = <GIC_SPI 363 IRQ_TYPE_LEVEL_HIGH 0>;
 			#mbox-cells = <1>;
 			cix,mbox_dir = <0>;
 			status = "disabled";
 		};
 
-		mbox_pm2ap: mailbox@65a0080 {
+		mbox_pm2ap: mailbox@65a0000 {
 			compatible = "cix,sky1-mbox";
-			reg = <0x0 0x065a0080 0x0 0xff80>;
+			reg = <0x0 0x065a0000 0x0 0x10000>;
 			interrupts = <GIC_SPI 359 IRQ_TYPE_LEVEL_HIGH 0>;
 			#mbox-cells = <1>;
 			cix,mbox_dir = <1>;
@@ -3501,7 +3500,7 @@
 			};
 		};
 
-		ap_to_tfa_scmi:scmi-smc {
+		ap_to_tfa_scmi: scmi-smc {
 			compatible = "arm,scmi-smc";
 			arm,smc-id = <0xc2000001>;
 			#address-cells = <1>;
