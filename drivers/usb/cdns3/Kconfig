@@ -89,6 +89,19 @@ config USB_CDNS3_STARFIVE
 
 	  If you choose to build this driver as module it will
 	  be dynamically linked and module will be called cdns3-starfive.ko
+
+config USB_CDNSP_SKY1
+	tristate "Cadence USBSSP support on CIX Sky1 SoC platforms"
+	depends on ARCH_CIX || COMPILE_TEST
+	default USB_CDNS_SUPPORT
+	help
+	  Say 'Y' or 'M' here if you are building for CIX Sky1 SoCs
+	  platforms that contain Cadence USBSSP controller core.
+
+	  e.g. Sky1 (Orion O6).
+
+	  If you choose to build this driver as module it will
+	  be dynamically linked and module will be called cdnsp-sky1.ko
 endif
 
 if USB_CDNS_SUPPORT

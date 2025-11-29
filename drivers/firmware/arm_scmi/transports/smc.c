@@ -139,6 +139,11 @@ static int smc_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 	u32 func_id;
 	int ret;
 
+	pr_info("smc_chan_setup: tx=%d dev=%s cdev=%s\n", tx,
+		dev_name(dev), dev_name(cdev));
+	pr_info("smc_chan_setup: dev->of_node=%pOF cdev->of_node=%pOF\n",
+		dev->of_node, cdev->of_node);
+
 	if (!tx)
 		return -ENODEV;
 
@@ -148,12 +153,17 @@ static int smc_chan_setup(struct scmi_chan_info *cinfo, struct device *dev,
 
 	scmi_info->shmem = core->shmem->setup_iomap(cinfo, dev, tx, &res,
 						    &scmi_info->io_ops);
-	if (IS_ERR(scmi_info->shmem))
+	if (IS_ERR(scmi_info->shmem)) {
+		pr_err("smc_chan_setup: setup_iomap failed: %ld\n",
+		       PTR_ERR(scmi_info->shmem));
 		return PTR_ERR(scmi_info->shmem);
+	}
 
 	ret = of_property_read_u32(dev->of_node, "arm,smc-id", &func_id);
-	if (ret < 0)
+	if (ret < 0) {
+		pr_err("smc_chan_setup: arm,smc-id read failed: %d\n", ret);
 		return ret;
+	}
 
 	if (of_device_is_compatible(dev->of_node, "qcom,scmi-smc")) {
 		resource_size_t size = resource_size(&res);
