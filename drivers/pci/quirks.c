@@ -2907,6 +2907,27 @@ DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_NVIDIA, 0x229e,
 			      pci_quirk_nvidia_tegra_disable_rp_msi);
 
 /*
+ * CIX CD8180 PCIe root ports (used in Sky1/Orion SoCs) advertise MSI-X
+ * capability but the MSI-X table is located in BAR0 which doesn't exist.
+ * Accessing the non-existent BAR causes an SError. Disable MSI/MSI-X for
+ * these root ports; downstream devices can still use MSI.
+ *
+ * These root ports appear with two different vendor IDs:
+ * - 0x17cd (Cadence) with device 0x0000 - raw hardware ID
+ * - 0x1f6c (CIX Technology) with device 0x0001 - vendor-programmed ID
+ */
+static void pci_quirk_cix_disable_rp_msi(struct pci_dev *dev)
+{
+	dev->no_msi = 1;
+}
+DECLARE_PCI_FIXUP_CLASS_EARLY(0x17cd, 0x0000,
+			      PCI_CLASS_BRIDGE_PCI, 8,
+			      pci_quirk_cix_disable_rp_msi);
+DECLARE_PCI_FIXUP_CLASS_EARLY(0x1f6c, 0x0001,
+			      PCI_CLASS_BRIDGE_PCI, 8,
+			      pci_quirk_cix_disable_rp_msi);
+
+/*
  * Some versions of the MCP55 bridge from Nvidia have a legacy IRQ routing
  * config register.  This register controls the routing of legacy
  * interrupts from devices that route through the MCP55.  If this register
