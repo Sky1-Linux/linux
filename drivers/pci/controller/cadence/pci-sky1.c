@@ -2326,17 +2326,6 @@ static int sky1_pcie_probe(struct platform_device *pdev)
 
 	dev_info(dev, "%s starting!\n", __func__);
 
-	/* TEMPORARY: Only allow NVMe controller (a070000) to probe.
-	 * Other controllers cause resource conflicts during bring-up.
-	 */
-	{
-		struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-		if (res && res->start != 0x0a070000) {
-			dev_info(dev, "Skipping secondary controller at %pR\n", res);
-			return -ENODEV;
-		}
-	}
-
 	pcie = devm_kzalloc(dev, sizeof(*pcie), GFP_KERNEL);
 	if (!pcie)
 		return -ENOMEM;
