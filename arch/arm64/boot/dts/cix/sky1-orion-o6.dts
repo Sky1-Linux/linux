@@ -16,12 +16,6 @@
 
 	chosen {
 		stdout-path = &uart2;
-		/*
-		 * pci=realloc needed because RTL8126/RTL8852BE have IO BARs
-		 * that can't be allocated (no IO window on bridges), and
-		 * without realloc the PCI core leaves state corrupted.
-		 */
-		bootargs = "pci=realloc";
 	};
 
 	dummy_codec: dummy_codec {
@@ -2079,9 +2073,14 @@
 	status = "okay";
 };
 
-/* PCIe X16 Slot - disabled, causes SCMI timeouts */
+/* PCIe X16 Slot */
 &pcie_x8_rc {
-	status = "disabled";
+	plat-evk;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_pcie_x8_rc>;
+	reset-gpios = <&s5_gpio0 1 GPIO_ACTIVE_HIGH>;
+	vcc-pcie-supply = <&vgfx_power>;
+	status = "okay";
 };
 
 /* M.2 M-Key */
