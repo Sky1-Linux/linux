@@ -205,9 +205,14 @@ static void __iomem *shmem_setup_iomap(struct scmi_chan_info *cinfo,
 	void __iomem *addr;
 	u32 reg_io_width;
 
+	pr_info("shmem_setup_iomap: cdev=%s cdev->of_node=%pOF idx=%d\n",
+		dev_name(cdev), cdev->of_node, idx);
+
 	shmem = of_parse_phandle(cdev->of_node, "shmem", idx);
-	if (!shmem)
+	if (!shmem) {
+		pr_err("shmem_setup_iomap: of_parse_phandle failed for shmem[%d]\n", idx);
 		return IOMEM_ERR_PTR(-ENODEV);
+	}
 
 	if (!of_device_is_compatible(shmem, "arm,scmi-shmem"))
 		return IOMEM_ERR_PTR(-ENXIO);
