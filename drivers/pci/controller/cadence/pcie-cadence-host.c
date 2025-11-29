@@ -645,8 +645,19 @@ static int cdns_pcie_host_init_address_translation(struct cdns_pcie_rc *rc)
 	if (entry)
 		busnr = entry->res->start;
 
-	/* Set up outbound regions for memory/IO windows */
+	/*
+	 * Set up outbound ATU regions:
+	 * - Region 0: Config space (set up above)
+	 * - Region 1: MSG region for PCIe messaging (if msg_res defined)
+	 * - Region 2+: Memory/IO windows (or 1+ if no msg_res)
+	 */
 	r = 1;
+	if (pcie->msg_res) {
+		cdns_pcie_set_outbound_region_for_normal_msg(pcie, busnr, 0, r,
+							    pcie->msg_res->start);
+		r++;
+	}
+
 	resource_list_for_each_entry(entry, &bridge->windows) {
 		struct resource *res = entry->res;
 		u64 pci_addr = res->start - entry->offset;

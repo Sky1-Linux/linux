@@ -277,6 +277,7 @@ struct cdns_pcie_ops {
  * struct cdns_pcie - private data for Cadence PCIe controller drivers
  * @reg_base: IO mapped register base
  * @mem_res: start/end offsets in the physical system memory to map PCI accesses
+ * @msg_res: start/end offsets for PCIe msg region (optional, for ATU region 1)
  * @dev: PCIe controller
  * @is_rc: tell whether the PCIe controller mode is Root Complex or Endpoint.
  * @phy_count: number of supported PHY devices
@@ -288,6 +289,7 @@ struct cdns_pcie_ops {
 struct cdns_pcie {
 	void __iomem		*reg_base;
 	struct resource		*mem_res;
+	struct resource		*msg_res;
 	struct device		*dev;
 	bool			is_rc;
 	int			phy_count;
