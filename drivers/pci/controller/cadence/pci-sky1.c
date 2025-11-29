@@ -120,6 +120,73 @@ static atomic_t x211_phy_rst_finish_cnt = ATOMIC_INIT(0);
 static LIST_HEAD(sky1_pcie_list);
 static unsigned long linkup_delay;
 
+/*
+ * Local capability finder that takes void __iomem * directly.
+ * This matches the vendor 6.6 API, unlike mainline cdns_pcie_find_capability()
+ * which takes struct cdns_pcie *.
+ */
+static u8 __sky1_pcie_find_next_cap(void __iomem *addr, u8 start, u8 cap)
+{
+	u8 id, next_cap;
+	u16 reg;
+
+	for (int pos = start; pos; pos = next_cap) {
+		reg = readl(addr + pos);
+		id = reg & 0xff;
+		next_cap = (reg >> 8) & 0xff;
+		if (id == cap)
+			return pos;
+	}
+	return 0;
+}
+
+static u8 sky1_pcie_find_capability(void __iomem *addr, u8 cap)
+{
+	u8 next_cap_ptr;
+	u16 reg;
+
+	reg = readl(addr + PCI_CAPABILITY_LIST);
+	next_cap_ptr = reg & 0xff;
+
+	return __sky1_pcie_find_next_cap(addr, next_cap_ptr, cap);
+}
+
+/*
+ * Local extended capability finder that takes void __iomem * directly.
+ * This matches the vendor 6.6 API, unlike mainline cdns_pcie_find_ext_capability()
+ * which takes struct cdns_pcie *.
+ */
+static u16 sky1_pcie_find_ext_capability(void __iomem *addr, u8 cap)
+{
+	u32 header;
+	int ttl;
+	int pos = PCI_CFG_SPACE_SIZE;
+
+	/* minimum 8 bytes per capability */
+	ttl = (PCI_CFG_SPACE_EXP_SIZE - PCI_CFG_SPACE_SIZE) / 8;
+
+	header = readl(addr + pos);
+	/*
+	 * If we have no capabilities, this is indicated by cap ID,
+	 * cap version and next pointer all being 0.
+	 */
+	if (header == 0)
+		return 0;
+
+	while (ttl-- > 0) {
+		if (PCI_EXT_CAP_ID(header) == cap)
+			return pos;
+
+		pos = PCI_EXT_CAP_NEXT(header);
+		if (pos < PCI_CFG_SPACE_SIZE)
+			break;
+
+		header = readl(addr + pos);
+	}
+
+	return 0;
+}
+
 static const struct sky1_pcie_ctrl_desc sky1_pcie_desc[] = {
 	{
 		.id = PCIE_ID_x8,
@@ -358,7 +425,7 @@ static void sky1_pcie_enable_pmpme_rc(struct sky1_pcie *pcie, bool en)
 	u32 reg;
 	u8 offset;
 
-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_PM);
+	offset = sky1_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_PM);
 	dev_info(dev, "PCI_CAP_ID_PM offset = 0x%x\n", offset);
 	reg = sky1_pcie_ctrl_readl_reg(pcie, offset + PCI_PM_CTRL);
 	/* Clear PME status. */
@@ -379,7 +446,7 @@ static void sky1_pcie_pme_work_fn(struct work_struct *work)
 	u8 offset;
 
 	mutex_lock(&pcie->pme_mutex);
-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
+	offset = sky1_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
 	dev_info(dev, "PCI_CAP_ID_EXP offset = 0x%x\n", offset);
 
 	/* disable pme interrupt */
@@ -507,13 +574,13 @@ static void sky1_pcie_handle_rp_aer_irq(struct sky1_pcie *pcie)
 
 	reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
 	aer_offset =
-		cdns_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
+		sky1_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
 	if (!aer_offset) {
 		dev_err(dev, "RC no aer capability\n");
 		return;
 	}
 
-	offset = cdns_pcie_find_capability(reg_base, PCI_CAP_ID_EXP);
+	offset = sky1_pcie_find_capability(reg_base, PCI_CAP_ID_EXP);
 	if (!offset) {
 		dev_err(dev, "RC no pci capability\n");
 		return;
@@ -636,7 +703,7 @@ static irqreturn_t sky1_pcie_aer_irq_handler(int irq, void *arg)
 	spin_lock_irqsave(&pcie->aer_lock, flags);
 	reg_base = pcie->reg_base + CDNS_PCIE_RP_BASE;
 	aer_offset =
-		cdns_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
+		sky1_pcie_find_ext_capability(reg_base, PCI_EXT_CAP_ID_ERR);
 	if (!aer_offset) {
 		dev_err(pcie->dev, "RC no aer capability\n");
 		ret = IRQ_NONE;
@@ -1591,7 +1658,7 @@ static void sky1_pcie_set_devctrl(struct sky1_pcie *pcie)
 	u32 reg;
 	u16 offset;
 
-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
+	offset = sky1_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
 	if (!offset)
 		return;
 	dev_dbg(dev, "PCI_CAP_ID_EXP offset = 0x%x\n", offset);
@@ -1618,7 +1685,7 @@ static void sky1_pcie_set_preset_val(struct sky1_pcie *pcie)
 	struct device *dev = pcie->dev;
 	u16 offset;
 
-	offset = cdns_pcie_find_ext_capability(pcie->reg_base,
+	offset = sky1_pcie_find_ext_capability(pcie->reg_base,
 					       PCI_EXT_CAP_ID_SECPCI);
 	if (!offset)
 		return;
@@ -1629,7 +1696,7 @@ static void sky1_pcie_set_preset_val(struct sky1_pcie *pcie)
 	sky1_pcie_ctrl_writel_reg(pcie, offset + 0x14, 0x27072707);
 	sky1_pcie_ctrl_writel_reg(pcie, offset + 0x18, 0x27072707);
 
-	offset = cdns_pcie_find_ext_capability(pcie->reg_base,
+	offset = sky1_pcie_find_ext_capability(pcie->reg_base,
 					       PCI_EXT_CAP_ID_PL_16GT);
 	if (!offset)
 		return;
@@ -1705,7 +1772,7 @@ static void sky1_pcie_set_l0s_disable(struct sky1_pcie *pcie)
 	if (!of_property_read_bool(np, "aspm-no-l0s"))
 		return;
 
-	offset = cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
+	offset = sky1_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
 	/* Clear L0s from RC's link cap */
 	reg = sky1_pcie_ctrl_readl_reg(pcie, offset + PCI_EXP_LNKCAP);
 	reg &= ~PCI_EXP_LNKCAP_ASPM_L0S;
@@ -2088,7 +2155,7 @@ static void sky1_pcie_get_linkctrl_offset(struct sky1_pcie *pcie)
 {
 	/* PCI_EXP_LNKCTL_LD: Link Disable */
 	pcie->linkctrl_offset =
-		cdns_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP) +
+		sky1_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP) +
 		PCI_EXP_LNKCTL;
 }
 
