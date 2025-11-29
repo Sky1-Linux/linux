@@ -1184,13 +1184,19 @@ static int sky1_pcie_parse_mem(struct sky1_pcie *pcie)
 	dev_info(dev, "ioremap %s, paddr:%pR, vaddr:%px\n", "rcsu", res,
 		 pcie->rcsu_base);
 
-	/*reg*/
-	base = devm_platform_ioremap_resource_byname(pdev, "reg");
-	if (IS_ERR(base)) {
+	/*reg - use devm_ioremap to avoid EBUSY from overlapping reservations */
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "reg");
+	if (!res) {
 		dev_err(dev, "Parse \"reg\" resource err\n");
-		return PTR_ERR(base);
+		return -ENXIO;
+	}
+	base = devm_ioremap(dev, res->start, resource_size(res));
+	if (!base) {
+		dev_err(dev, "ioremap failed for resource %pR\n", res);
+		return -ENOMEM;
 	}
 	pcie->reg_base = base;
+	dev_info(dev, "ioremap %s, paddr:%pR, vaddr:%px\n", "reg", res, base);
 
 	/*msg*/
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "msg");
@@ -2319,6 +2325,18 @@ static int sky1_pcie_probe(struct platform_device *pdev)
 	int ret;
 
 	dev_info(dev, "%s starting!\n", __func__);
+
+	/* TEMPORARY: Only allow NVMe controller (a070000) to probe.
+	 * Other controllers cause resource conflicts during bring-up.
+	 */
+	{
+		struct resource *res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+		if (res && res->start != 0x0a070000) {
+			dev_info(dev, "Skipping secondary controller at %pR\n", res);
+			return -ENODEV;
+		}
+	}
+
 	pcie = devm_kzalloc(dev, sizeof(*pcie), GFP_KERNEL);
 	if (!pcie)
 		return -ENOMEM;
@@ -2389,9 +2407,9 @@ static int sky1_pcie_probe(struct platform_device *pdev)
 	bridge->ops = &sky1_pcie_own_ops;
 	bridge->child_ops = (struct pci_ops *)&pci_generic_ecam_ops.pci_ops;
 	rc = pci_host_bridge_priv(bridge);
-	/* Note: ecam_support_flag and id stored in pcie struct, not rc (mainline) */
 	rc->cfg_base = pcie->cfg->win;
 	rc->cfg_res = &pcie->cfg->res;
+	rc->ecam_support_flag = pcie->ecam_support_flag;
 
 	cdns_pcie = &rc->pcie;
 	cdns_pcie->dev = dev;

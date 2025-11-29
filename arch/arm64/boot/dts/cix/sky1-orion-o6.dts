@@ -1359,10 +1359,11 @@
 	status = "disabled";
 };
 
+/* USB PHYs disabled to bypass boot hang - PCIe/USB shared SerDes conflict */
 &usbc_phy0 {
 	orientation-switch;
 	svid = <0xff01>;
-	status = "okay";
+	status = "disabled";
 	default_conf = /bits/ 8 <0x03>;
 	mode-switch;
 
@@ -1378,7 +1379,7 @@
 };
 
 &usb3_phy0 {
-	status = "okay";
+	status = "disabled";
 };
 
 &usbc0_dp_phy {
@@ -1410,8 +1411,7 @@
 };
 
 &usbc_phy1 {
-	status = "okay";
-	default_conf = /bits/ 8 <0x02>;
+	status = "disabled";
 };
 
 &usb3_phy1 {
@@ -1444,7 +1444,7 @@
 };
 
 &usbc_phy2 {
-	status = "okay";
+	status = "disabled";
 	orientation-switch;
 	svid = <0xff01>;
 	default_conf = /bits/ 8 <0x03>;
@@ -1462,7 +1462,7 @@
 };
 
 &usb3_phy2 {
-	status = "okay";
+	status = "disabled";
 };
 
 &usbc2_dp_phy {
@@ -1494,8 +1494,7 @@
 };
 
 &usbc_phy3 {
-	status = "okay";
-	default_conf = /bits/ 8 <0x02>;
+	status = "disabled";
 };
 
 &usb3_phy3 {
@@ -2074,14 +2073,9 @@
 	status = "okay";
 };
 
-/* PCIe X16 Slot */
+/* PCIe X16 Slot - disabled to avoid resource conflict during boot */
 &pcie_x8_rc {
-	plat-evk;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_pcie_x8_rc>;
-	reset-gpios = <&s5_gpio0 1 GPIO_ACTIVE_HIGH>;
-	vcc-pcie-supply = <&vgfx_power>;
-	status = "okay";
+	status = "disabled";
 };
 
 /* M.2 M-Key */
@@ -2093,34 +2087,19 @@
 	status = "okay";
 };
 
-/* M.2 E-Key */
+/* M.2 E-Key - disabled to avoid resource conflict during boot */
 &pcie_x2_rc {
-	plat-evk;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_pcie_x2_rc>;
-	reset-gpios = <&s5_gpio0 4 GPIO_ACTIVE_HIGH>;
-	vcc-pcie-supply = <&vdd_3v3_pcie>;
-	status = "okay";
+	status = "disabled";
 };
 
-/* 5GBE-1 */
+/* 5GBE-1 - disabled to avoid resource conflict during boot */
 &pcie_x1_1_rc {
-	plat-evk;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_pcie_x1_1_rc>;
-	reset-gpios = <&s5_gpio0 2 GPIO_ACTIVE_HIGH>;
-	vcc-pcie-supply = <&gbe1_power_3v3>;
-	status = "okay";
+	status = "disabled";
 };
 
-/* 5GBE-2 */
+/* 5GBE-2 - disabled to avoid resource conflict during boot */
 &pcie_x1_0_rc {
-	plat-evk;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_pcie_x1_0_rc>;
-	reset-gpios = <&s5_gpio0 5 GPIO_ACTIVE_HIGH>;
-	vcc-pcie-supply = <&gbe2_power_3v3>;
-	status = "okay";
+	status = "disabled";
 };
 
 &pcie1_phy {
