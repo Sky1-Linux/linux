@@ -23,6 +23,17 @@ u16 cdns_pcie_find_ext_capability(struct cdns_pcie *pcie, u8 cap)
 }
 EXPORT_SYMBOL_GPL(cdns_pcie_find_ext_capability);
 
+/*
+ * Physical Layer Configuration Register 0
+ * Used for LTSSM Detect Quiet min delay on Sky1 hardware.
+ */
+#define CDNS_PCIE_PHY_LAYER_CFG0		(CDNS_PCIE_LM_BASE + 0x0400)
+#define CDNS_PCIE_PHY_DETECT_QUIET_MIN_DELAY_MASK	GENMASK(26, 24)
+#define CDNS_PCIE_PHY_DETECT_QUIET_MIN_DELAY_SHIFT	24
+#define CDNS_PCIE_PHY_DETECT_QUIET_MIN_DELAY(delay) \
+	(((delay) << CDNS_PCIE_PHY_DETECT_QUIET_MIN_DELAY_SHIFT) & \
+	 CDNS_PCIE_PHY_DETECT_QUIET_MIN_DELAY_MASK)
+
 void cdns_pcie_detect_quiet_min_delay_set(struct cdns_pcie *pcie)
 {
 	u32 delay = 0x3;
@@ -30,13 +41,14 @@ void cdns_pcie_detect_quiet_min_delay_set(struct cdns_pcie *pcie)
 
 	/*
 	 * Set the LTSSM Detect Quiet state min. delay to 2ms.
+	 * Sky1 uses PHY_LAYER_CFG0 register at offset 0x1400.
 	 */
-	ltssm_control_cap = cdns_pcie_readl(pcie, CDNS_PCIE_LTSSM_CONTROL_CAP);
+	ltssm_control_cap = cdns_pcie_readl(pcie, CDNS_PCIE_PHY_LAYER_CFG0);
 	ltssm_control_cap = ((ltssm_control_cap &
-			    ~CDNS_PCIE_DETECT_QUIET_MIN_DELAY_MASK) |
-			    CDNS_PCIE_DETECT_QUIET_MIN_DELAY(delay));
+			    ~CDNS_PCIE_PHY_DETECT_QUIET_MIN_DELAY_MASK) |
+			    CDNS_PCIE_PHY_DETECT_QUIET_MIN_DELAY(delay));
 
-	cdns_pcie_writel(pcie, CDNS_PCIE_LTSSM_CONTROL_CAP, ltssm_control_cap);
+	cdns_pcie_writel(pcie, CDNS_PCIE_PHY_LAYER_CFG0, ltssm_control_cap);
 }
 EXPORT_SYMBOL_GPL(cdns_pcie_detect_quiet_min_delay_set);
 
@@ -50,7 +62,7 @@ void cdns_pcie_set_outbound_region(struct cdns_pcie *pcie, u8 busnr, u8 fn,
 	 */
 	u64 sz = 1ULL << fls64(size - 1);
 	int nbits = ilog2(sz);
-	u32 addr0, addr1, desc0, desc1;
+	u32 addr0, addr1, desc0, desc1, ctrl0 = 0;
 
 	if (nbits < 8)
 		nbits = 8;
@@ -71,35 +83,27 @@ void cdns_pcie_set_outbound_region(struct cdns_pcie *pcie, u8 busnr, u8 fn,
 	desc1 = 0;
 
 	/*
-	 * Whatever Bit [23] is set or not inside DESC0 register of the outbound
-	 * PCIe descriptor, the PCI function number must be set into
-	 * Bits [26:24] of DESC0 anyway.
+	 * Sky1 vendor IP uses CTRL0 register bits [26] and [25] to control
+	 * whether bus/device/function numbers are supplied by software.
 	 *
-	 * In Root Complex mode, the function number is always 0 but in Endpoint
-	 * mode, the PCIe controller may support more than one function. This
-	 * function number needs to be set properly into the outbound PCIe
-	 * descriptor.
+	 * In Root Complex mode, set SUPPLY_BUS and SUPPLY_DEV_FN bits,
+	 * and provide bus number in DESC1[31:24], devfn in DESC1[23:16].
 	 *
-	 * Besides, setting Bit [23] is mandatory when in Root Complex mode:
-	 * then the driver must provide the bus, resp. device, number in
-	 * Bits [7:0] of DESC1, resp. Bits[31:27] of DESC0. Like the function
-	 * number, the device number is always 0 in Root Complex mode.
-	 *
-	 * However when in Endpoint mode, we can clear Bit [23] of DESC0, hence
-	 * the PCIe controller will use the captured values for the bus and
-	 * device numbers.
+	 * In Endpoint mode, clear these bits to use captured values,
+	 * but still set function number in DESC1.
 	 */
 	if (pcie->is_rc) {
 		/* The device and function numbers are always 0. */
-		desc0 |= CDNS_PCIE_AT_OB_REGION_DESC0_HARDCODED_RID |
-			 CDNS_PCIE_AT_OB_REGION_DESC0_DEVFN(0);
-		desc1 |= CDNS_PCIE_AT_OB_REGION_DESC1_BUS(busnr);
+		desc1 = CDNS_PCIE_AT_OB_REGION_DESC1_BUS(busnr) |
+			CDNS_PCIE_AT_OB_REGION_DESC1_DEVFN(0);
+		ctrl0 = CDNS_PCIE_AT_OB_REGION_CTRL0_SUPPLY_BUS |
+			CDNS_PCIE_AT_OB_REGION_CTRL0_SUPPLY_DEV_FN;
 	} else {
 		/*
 		 * Use captured values for bus and device numbers but still
 		 * need to set the function number.
 		 */
-		desc0 |= CDNS_PCIE_AT_OB_REGION_DESC0_DEVFN(fn);
+		desc1 |= CDNS_PCIE_AT_OB_REGION_DESC1_DEVFN(fn);
 	}
 
 	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_DESC0(r), desc0);
@@ -115,6 +119,7 @@ void cdns_pcie_set_outbound_region(struct cdns_pcie *pcie, u8 busnr, u8 fn,
 
 	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CPU_ADDR0(r), addr0);
 	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CPU_ADDR1(r), addr1);
+	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CTRL0(r), ctrl0);
 }
 EXPORT_SYMBOL_GPL(cdns_pcie_set_outbound_region);
 
@@ -122,18 +127,19 @@ void cdns_pcie_set_outbound_region_for_normal_msg(struct cdns_pcie *pcie,
 						  u8 busnr, u8 fn,
 						  u32 r, u64 cpu_addr)
 {
-	u32 addr0, addr1, desc0, desc1;
+	u32 addr0, addr1, desc0, desc1, ctrl0 = 0;
 
 	desc0 = CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_NORMAL_MSG;
 	desc1 = 0;
 
 	/* See cdns_pcie_set_outbound_region() comments above. */
 	if (pcie->is_rc) {
-		desc0 |= CDNS_PCIE_AT_OB_REGION_DESC0_HARDCODED_RID |
-			 CDNS_PCIE_AT_OB_REGION_DESC0_DEVFN(0);
-		desc1 |= CDNS_PCIE_AT_OB_REGION_DESC1_BUS(busnr);
+		desc1 = CDNS_PCIE_AT_OB_REGION_DESC1_BUS(busnr) |
+			CDNS_PCIE_AT_OB_REGION_DESC1_DEVFN(0);
+		ctrl0 = CDNS_PCIE_AT_OB_REGION_CTRL0_SUPPLY_BUS |
+			CDNS_PCIE_AT_OB_REGION_CTRL0_SUPPLY_DEV_FN;
 	} else {
-		desc0 |= CDNS_PCIE_AT_OB_REGION_DESC0_DEVFN(fn);
+		desc1 |= CDNS_PCIE_AT_OB_REGION_DESC1_DEVFN(fn);
 	}
 
 	/* Set the CPU address */
@@ -150,6 +156,7 @@ void cdns_pcie_set_outbound_region_for_normal_msg(struct cdns_pcie *pcie,
 	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_DESC1(r), desc1);
 	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CPU_ADDR0(r), addr0);
 	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CPU_ADDR1(r), addr1);
+	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CTRL0(r), ctrl0);
 }
 EXPORT_SYMBOL_GPL(cdns_pcie_set_outbound_region_for_normal_msg);
 
@@ -163,6 +170,7 @@ void cdns_pcie_reset_outbound_region(struct cdns_pcie *pcie, u32 r)
 
 	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CPU_ADDR0(r), 0);
 	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CPU_ADDR1(r), 0);
+	cdns_pcie_writel(pcie, CDNS_PCIE_AT_OB_REGION_CTRL0(r), 0);
 }
 EXPORT_SYMBOL_GPL(cdns_pcie_reset_outbound_region);
 
