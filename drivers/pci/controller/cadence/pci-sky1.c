@@ -2318,12 +2318,25 @@ static int sky1_pci_host_probe(struct pci_host_bridge *bridge)
 static int sky1_cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 {
 	struct pci_host_bridge *bridge = pci_host_bridge_from_priv(rc);
+	struct cdns_pcie *pcie = &rc->pcie;
+	struct device *dev = pcie->dev;
 	enum cdns_pcie_rp_bar bar;
 	int ret;
 
 	ret = cdns_pcie_host_link_setup(rc);
 	if (ret)
 		return ret;
+
+	/*
+	 * Mainline's cdns_pcie_host_link_setup() returns 0 even when link
+	 * doesn't come up. Check link status explicitly - if link is down
+	 * (empty slot), fail probe gracefully instead of trying to enumerate
+	 * non-existent devices which causes hangs.
+	 */
+	if (!cdns_pcie_link_up(pcie)) {
+		dev_info(dev, "PCIe link down, slot may be empty\n");
+		return -ENODEV;
+	}
 
 	for (bar = RP_BAR0; bar <= RP_NO_BAR; bar++)
 		rc->avail_ib_bar[bar] = true;
