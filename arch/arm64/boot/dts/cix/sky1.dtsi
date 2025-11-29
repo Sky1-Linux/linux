@@ -2212,11 +2212,8 @@
 			max-link-speed = <4>;
 			num-lanes = <2>;
 			max-payload = <512>;
-			/*
-			 * Note: IO range removed - RTL8852BE WiFi uses only MMIO.
-			 * Removing unused IO ranges avoids allocation failures.
-			 */
-			ranges = <0x02000000 0x0 0x40200000 0x0 0x40200000 0x0 0x0fe00000>,
+			ranges = <0x01000000 0x0 0x40100000 0x0 0x40100000 0x0 0x00100000>,
+				 <0x02000000 0x0 0x40200000 0x0 0x40200000 0x0 0x0fe00000>,
 				 <0x43000000 0x10 0x00000000 0x10 0x00000000 0x04 0x00000000>;
 			cdns,no-inbound-bar;
 			clocks = <&scmi_clk CLK_TREE_PCIE_CTRL2_CLK>,
@@ -2298,11 +2295,8 @@
 			max-link-speed = <4>;
 			num-lanes = <1>;
 			max-payload = <512>;
-			/*
-			 * Note: IO range removed - RTL8126 5GbE uses only MMIO.
-			 * Removing unused IO ranges avoids allocation failures.
-			 */
-			ranges = <0x02000000 0x0 0x38200000 0x0 0x38200000 0x0 0x07e00000>,
+			ranges = <0x01000000 0x0 0x38100000 0x0 0x38100000 0x0 0x00100000>,
+				 <0x02000000 0x0 0x38200000 0x0 0x38200000 0x0 0x07e00000>,
 				 <0x43000000 0x0C 0x00000000 0x0C 0x00000000 0x04 0x00000000>;
 			cdns,no-inbound-bar;
 			clocks = <&scmi_clk CLK_TREE_PCIE_CTRL4_CLK>,
@@ -2350,11 +2344,8 @@
 			max-link-speed = <4>;
 			num-lanes = <1>;
 			max-payload = <512>;
-			/*
-			 * Note: IO range removed - RTL8126 5GbE uses only MMIO.
-			 * Removing unused IO ranges avoids allocation failures.
-			 */
-			ranges = <0x02000000 0x0 0x30200000 0x0 0x30200000 0x0 0x07e00000>,
+			ranges = <0x01000000 0x0 0x30100000 0x0 0x30100000 0x0 0x00100000>,
+				 <0x02000000 0x0 0x30200000 0x0 0x30200000 0x0 0x07e00000>,
 				 <0x43000000 0x08 0x00000000 0x08 0x00000000 0x04 0x00000000>;
 			cdns,no-inbound-bar;
 			clocks = <&scmi_clk CLK_TREE_PCIE_CTRL3_CLK>,
