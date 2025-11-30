@@ -2878,14 +2878,14 @@
 		};
 
 		gpu: gpu@15010000 {
-			compatible = "arm,mali-valhall";
-			reg = <0x0 0x15000000 0x0 0x10000>,
-				<0x0 0x15010000 0x0 0x480000>;
-			reg-names = "gpu_rcsu", "gpu";
+			compatible = "cix,sky1-mali";
+			reg = <0x0 0x15010000 0x0 0x480000>,
+			      <0x0 0x15000000 0x0 0x10000>;
+			reg-names = "gpu", "rcsu";
 			interrupts = <GIC_SPI 237 IRQ_TYPE_LEVEL_HIGH 0>,
 					<GIC_SPI 238 IRQ_TYPE_LEVEL_HIGH 0>,
 					<GIC_SPI 239 IRQ_TYPE_LEVEL_HIGH 0>;
-			interrupt-names = "JOB", "MMU", "GPU";
+			interrupt-names = "job", "mmu", "gpu";
 			system-coherency = <0>;
 			physical-memory-group-manager = <&gpu_physical_memory_group_manager>;
 			protected-memory-allocator = <&gpu_protected_memory_allocator>;
@@ -2893,7 +2893,7 @@
 			power-domain-names = "pd_gpu", "perf";
 			clocks = <&scmi_clk CLK_TREE_GPU_CLK_CORE>, <&scmi_clk CLK_TREE_GPU_CLK_STACKS>,
 					<&scmi_clk CLK_TREE_GPU_CLK_200M>, <&scmi_clk CLK_TREE_GPU_CLK_400M>;
-			clock-names = "gpu_clk_core", "gpu_clk_stacks",
+			clock-names = "core", "stacks",
 						"gpu_clk_200M", "gpu_clk_400M";
 			resets = <&src SKY1_GPU_RCSU_RESET_N>,
 				 <&src SKY1_GPU_RESET_N>;
