@@ -1684,6 +1684,7 @@ ATTRIBUTE_GROUPS(panthor);
 
 static const struct of_device_id dt_match[] = {
 	{ .compatible = "rockchip,rk3588-mali" },
+	{ .compatible = "cix,sky1-mali" },
 	{ .compatible = "arm,mali-valhall-csf" },
 	{}
 };
