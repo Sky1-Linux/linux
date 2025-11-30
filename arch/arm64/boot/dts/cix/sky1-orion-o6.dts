@@ -1379,7 +1379,7 @@
 };
 
 &usb3_phy0 {
-	status = "disabled";
+	status = "okay";
 };
 
 &usbc0_dp_phy {
@@ -1445,7 +1445,7 @@
 };
 
 &usbc_phy2 {
-	status = "disabled";
+	status = "okay";
 	orientation-switch;
 	svid = <0xff01>;
 	default_conf = /bits/ 8 <0x03>;
@@ -1463,7 +1463,7 @@
 };
 
 &usb3_phy2 {
-	status = "disabled";
+	status = "okay";
 };
 
 &usbc2_dp_phy {
@@ -1495,7 +1495,7 @@
 };
 
 &usbc_phy3 {
-	status = "disabled";
+	status = "okay";
 };
 
 &usb3_phy3 {
