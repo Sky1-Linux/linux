@@ -1359,11 +1359,11 @@
 	status = "disabled";
 };
 
-/* USB PHYs disabled to bypass boot hang - PCIe/USB shared SerDes conflict */
+/* USBDP PHY - needed for DP TX output */
 &usbc_phy0 {
 	orientation-switch;
 	svid = <0xff01>;
-	status = "disabled";
+	status = "okay";
 	default_conf = /bits/ 8 <0x03>;
 	mode-switch;
 
@@ -1411,7 +1411,8 @@
 };
 
 &usbc_phy1 {
-	status = "disabled";
+	status = "okay";
+	default_conf = /bits/ 8 <0x02>;  /* UDPHY_MODE_DP - pure DP for HDMI output */
 };
 
 &usb3_phy1 {
