@@ -1460,10 +1460,10 @@
 						<0x00 0x9014000 0x00 0x4000>,
 						<0x00 0x9018000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB_C_SSP_0_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB_C_SSP_0_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB_C_SSP_0_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* otgirq */
-						<GIC_SPI USB_C_SSP_0_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB_C_SSP_0_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB_C_SSP_0_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB_C_SSP_0_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* otgirq */
+						<GIC_SPI USB_C_SSP_0_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -1537,10 +1537,10 @@
 						<0x00 0x9084000 0x00 0x4000>,
 						<0x00 0x9088000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB_C_SSP_1_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB_C_SSP_1_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB_C_SSP_1_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* otgirq */
-						<GIC_SPI USB_C_SSP_1_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB_C_SSP_1_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB_C_SSP_1_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB_C_SSP_1_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* otgirq */
+						<GIC_SPI USB_C_SSP_1_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -1614,10 +1614,10 @@
 						<0x00 0x90f4000 0x00 0x4000>,
 						<0x00 0x90f8000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB_C_SSP_2_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB_C_SSP_2_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB_C_SSP_2_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* otgirq */
-						<GIC_SPI USB_C_SSP_2_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB_C_SSP_2_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB_C_SSP_2_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB_C_SSP_2_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* otgirq */
+						<GIC_SPI USB_C_SSP_2_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -1691,10 +1691,10 @@
 						<0x00 0x9164000 0x00 0x4000>,
 						<0x00 0x9168000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB_C_SSP_3_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB_C_SSP_3_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB_C_SSP_3_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* otgirq */
-						<GIC_SPI USB_C_SSP_3_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB_C_SSP_3_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB_C_SSP_3_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB_C_SSP_3_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* otgirq */
+						<GIC_SPI USB_C_SSP_3_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -1768,10 +1768,10 @@
 						<0x00 0x91d4000 0x00 0x4000>,
 						<0x00 0x91d8000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB_SSP_0_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB_SSP_0_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB_SSP_0_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* otgirq */
-						<GIC_SPI USB_SSP_0_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB_SSP_0_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB_SSP_0_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB_SSP_0_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* otgirq */
+						<GIC_SPI USB_SSP_0_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -1809,10 +1809,10 @@
 						<0x00 0x91e4000 0x00 0x4000>,
 						<0x00 0x91e8000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB_SSP_1_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB_SSP_1_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB_SSP_1_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* otgirq */
-						<GIC_SPI USB_SSP_1_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB_SSP_1_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB_SSP_1_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB_SSP_1_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* otgirq */
+						<GIC_SPI USB_SSP_1_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -1895,10 +1895,10 @@
 						<0x00 0x9264000 0x00 0x4000>,
 						<0x00 0x9268000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB2_0_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB2_0_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB2_0_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,		/* otgirq */
-						<GIC_SPI USB2_0_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB2_0_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB2_0_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB2_0_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,		/* otgirq */
+						<GIC_SPI USB2_0_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -1934,10 +1934,10 @@
 						<0x00 0x9294000 0x00 0x4000>,
 						<0x00 0x9298000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB2_1_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB2_1_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB2_1_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,		/* otgirq */
-						<GIC_SPI USB2_1_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB2_1_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB2_1_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB2_1_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,		/* otgirq */
+						<GIC_SPI USB2_1_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -1989,10 +1989,10 @@
 						<0x00 0x92c4000 0x00 0x4000>,
 						<0x00 0x92c8000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB2_2_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB2_2_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB2_2_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,		/* otgirq */
-						<GIC_SPI USB2_2_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB2_2_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB2_2_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB2_2_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,		/* otgirq */
+						<GIC_SPI USB2_2_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
@@ -2036,10 +2036,10 @@
 						<0x00 0x92f4000 0x00 0x4000>,
 						<0x00 0x92f8000 0x00 0x8000>;
 				reg-names = "otg", "dev", "xhci";
-				interrupts = <GIC_SPI USB2_3_HOST_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* host irq */
-						<GIC_SPI USB2_3_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH>,	/* peripheral irq */
-						<GIC_SPI USB2_3_OTG_IRQ IRQ_TYPE_LEVEL_HIGH>,		/* otgirq */
-						<GIC_SPI USB2_3_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH>;	/* wakeup irq */
+				interrupts = <GIC_SPI USB2_3_HOST_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* host irq */
+						<GIC_SPI USB2_3_PERIPHERAL_IRQ IRQ_TYPE_LEVEL_HIGH 0>,	/* peripheral irq */
+						<GIC_SPI USB2_3_OTG_IRQ IRQ_TYPE_LEVEL_HIGH 0>,		/* otgirq */
+						<GIC_SPI USB2_3_WAKEUP_IRQ IRQ_TYPE_LEVEL_HIGH 0>;	/* wakeup irq */
 				interrupt-names = "host",
 						"peripheral",
 						"otg",
