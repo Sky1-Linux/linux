@@ -47,10 +47,63 @@ struct panthor_gpu {
 	 GPU_IRQ_RESET_COMPLETED | \
 	 GPU_IRQ_CLEAN_CACHES_COMPLETED)
 
+/*
+ * AMBA_ENABLE register bit fields (arch12+ / G720)
+ * Bits 0-4: Coherency protocol (0=ACE_LITE, 1=ACE, 31=NONE)
+ * Bit 5: Shareable cache support
+ *
+ * Note: For arch12+, coherency is configured via AMBA_ENABLE (0x304),
+ * not by direct write. The mode value goes in bits 0-4.
+ */
+#define AMBA_ENABLE_COHERENCY_MASK	0x1F
+#define AMBA_ENABLE_SHAREABLE_CACHE	BIT(5)
+
 static void panthor_gpu_coherency_set(struct panthor_device *ptdev)
 {
+	/*
+	 * Sky1/G720 (arch12+): Use AMBA_ENABLE register with read-modify-write.
+	 * The coherency protocol is in bits 0-4, not the whole register.
+	 * Vendor uses ACE_LITE (mode 0) for coherency.
+	 */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali")) {
+		u32 val = gpu_read(ptdev, GPU_COHERENCY_PROTOCOL);
+
+		/* Clear coherency bits (0-4) to set ACE_LITE (mode 0) */
+		val &= ~AMBA_ENABLE_COHERENCY_MASK;
+
+		gpu_write(ptdev, GPU_COHERENCY_PROTOCOL, val);
+		return;
+	}
+
 	gpu_write(ptdev, GPU_COHERENCY_PROTOCOL,
 		ptdev->coherent ? GPU_COHERENCY_PROT_BIT(ACE_LITE) : GPU_COHERENCY_NONE);
+}
+
+/*
+ * Set AMBA shareable cache support for arch12+ GPUs.
+ * Enables the GPU to participate in shareable cache operations.
+ * Called after coherency_set, before L2 power-on.
+ */
+static void panthor_gpu_amba_set_shareable_cache(struct panthor_device *ptdev)
+{
+	u32 features, enable;
+
+	/* Only for Sky1/G720 with coherency enabled */
+	if (!of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali"))
+		return;
+
+	if (!ptdev->coherent)
+		return;
+
+	/* Check if shareable cache support is available in AMBA_FEATURES (0x300) */
+	features = gpu_read(ptdev, GPU_COHERENCY_FEATURES);
+	if (!(features & AMBA_ENABLE_SHAREABLE_CACHE))
+		return;
+
+	/* Set shareable cache support bit in AMBA_ENABLE (0x304) */
+	enable = gpu_read(ptdev, GPU_COHERENCY_PROTOCOL);
+	enable |= AMBA_ENABLE_SHAREABLE_CACHE;
+	gpu_write(ptdev, GPU_COHERENCY_PROTOCOL, enable);
 }
 
 static void panthor_gpu_irq_handler(struct panthor_device *ptdev, u32 status)
@@ -131,6 +184,17 @@ int panthor_gpu_init(struct panthor_device *ptdev)
 	if (ret)
 		return ret;
 
+	/*
+	 * G720 (arch >= 12): Issue a soft reset via PWR_COMMAND to enable
+	 * the HOST_POWER register block. Without this, the HOST_POWER
+	 * registers return 0 and shader power control doesn't work.
+	 */
+	if (GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
+		ret = panthor_gpu_soft_reset(ptdev);
+		if (ret)
+			return ret;
+	}
+
 	return 0;
 }
 
@@ -208,7 +272,7 @@ int panthor_gpu_block_power_on(struct panthor_device *ptdev,
 	gpu_write64(ptdev, pwron_reg, mask);
 
 	ret = gpu_read64_relaxed_poll_timeout(ptdev, rdy_reg, val,
-					      (mask & val) == val,
+					      (mask & val) == mask,
 					      100, timeout_us);
 	if (ret) {
 		drm_err(&ptdev->base, "timeout waiting on %s:%llx readiness",
@@ -267,12 +331,184 @@ int panthor_gpu_l2_power_on(struct panthor_device *ptdev)
 		/* Sky1 requires PWR_OVERRIDE1 for power transition latency */
 		gpu_write(ptdev, GPU_PWR_KEY, GPU_PWR_KEY_UNLOCK);
 		gpu_write(ptdev, GPU_PWR_OVERRIDE1, 0xFFFFFF);
+
+		/* Enable Ray Tracing Unit subdomain for shader cores */
+		gpu_write(ptdev, SHADER_PWRFEATURES, SHADER_PWRFEATURES_RTU_EN);
 	}
 
 	/* Set the desired coherency mode before the power up of L2 */
 	panthor_gpu_coherency_set(ptdev);
 
+	/* Enable shareable cache support if available (arch12+) */
+	panthor_gpu_amba_set_shareable_cache(ptdev);
+
 	return panthor_gpu_power_on(ptdev, L2, 1, 20000);
+}
+
+/**
+ * panthor_gpu_g720_shader_power_on() - Power on shader cores for G720
+ * @ptdev: Device.
+ *
+ * G720 (arch >= 12) uses a different power control interface with
+ * PWR_CMDARG and PWR_COMMAND registers instead of SHADER_PWRON.
+ *
+ * Return: 0 on success, a negative error code otherwise.
+ */
+int panthor_gpu_g720_shader_power_on(struct panthor_device *ptdev)
+{
+	u64 shader_mask = ptdev->gpu_info.shader_present;
+	bool is_sky1 = of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali");
+	u64 pwr_status;
+	u64 val;
+	int ret;
+
+	if (!shader_mask) {
+		drm_err(&ptdev->base, "G720: no shader cores present");
+		return -EINVAL;
+	}
+
+	/*
+	 * Sky1: HOST_POWER interface is non-functional (registers return 0).
+	 * Go directly to legacy SHADER_PWRON path without trying HOST_POWER.
+	 */
+	if (is_sky1) {
+		/* Check if already powered via legacy SHADER_READY */
+		val = gpu_read64(ptdev, SHADER_READY);
+		if ((val & shader_mask) == shader_mask) {
+			drm_dbg(&ptdev->base,
+				"Sky1: shaders already powered (ready=0x%llx)", val);
+			return 0;
+		}
+
+		/* Power on via legacy SHADER_PWRON */
+		gpu_write64(ptdev, SHADER_PWRON, shader_mask);
+
+		ret = gpu_read64_relaxed_poll_timeout(ptdev, SHADER_READY,
+						      val,
+						      (shader_mask & val) == shader_mask,
+						      100, 100000);
+		if (ret) {
+			drm_err(&ptdev->base,
+				"Sky1: shader power-on failed (ready=0x%llx)", val);
+			return ret;
+		}
+		drm_info(&ptdev->base,
+			 "Sky1: shaders powered via legacy path (ready=0x%llx)", val);
+		return 0;
+	}
+
+	/* Non-Sky1 G720 platforms: Try HOST_POWER interface first */
+
+	/* Debug: read various HOST_POWER registers */
+	pwr_status = gpu_read64(ptdev, PWR_STATUS);
+	val = gpu_read64(ptdev, HOST_POWER_SHADER_PRESENT);
+	drm_info(&ptdev->base,
+		 "G720: PWR_STATUS=0x%016llx HP_SHADER_PRESENT=0x%llx (vs gpu_info=0x%llx)",
+		 pwr_status, val, shader_mask);
+
+	/* Check if already powered */
+	val = gpu_read64(ptdev, HOST_POWER_SHADER_READY);
+	if ((val & shader_mask) == shader_mask) {
+		drm_info(&ptdev->base, "G720: shaders already powered (ready=0x%llx)", val);
+		return 0;
+	}
+
+	/*
+	 * If PWR_STATUS is 0, the HOST_POWER interface may not be initialized.
+	 * Try sending RETRACT command to request shader power control from MCU.
+	 */
+	if (pwr_status == 0) {
+		drm_info(&ptdev->base, "G720: PWR_STATUS=0, attempting to retract power control");
+
+		/* Send RETRACT command to request shader power control from MCU */
+		gpu_write64(ptdev, PWR_CMDARG, 0);
+		gpu_write(ptdev, PWR_COMMAND,
+			  PWR_COMMAND_DOMAIN_SHADER | PWR_COMMAND_RETRACT);
+
+		/* Wait for ALLOW_SHADER to become set */
+		ret = gpu_read64_relaxed_poll_timeout(ptdev, PWR_STATUS,
+						      pwr_status,
+						      pwr_status & PWR_STATUS_ALLOW_SHADER,
+						      100, 50000);
+		if (ret) {
+			drm_warn(&ptdev->base,
+				 "G720: RETRACT failed, PWR_STATUS still 0x%llx",
+				 pwr_status);
+			/* Continue to legacy path below */
+		} else {
+			drm_info(&ptdev->base,
+				 "G720: RETRACT succeeded, PWR_STATUS=0x%llx", pwr_status);
+		}
+	}
+
+	/*
+	 * If shader power is delegated to firmware, we cannot control it.
+	 * The firmware should power on shaders based on core_en_mask.
+	 */
+	if (pwr_status & PWR_STATUS_DELEGATED_SHADER) {
+		drm_info(&ptdev->base,
+			 "G720: shader power delegated to firmware, skipping host power-on");
+		return 0;
+	}
+
+	/*
+	 * If ALLOW_SHADER is not set after RETRACT attempt, fall back to
+	 * legacy SHADER_PWRON register. This may work if HOST_POWER isn't
+	 * fully functional but legacy interface is available.
+	 */
+	if (!(pwr_status & PWR_STATUS_ALLOW_SHADER)) {
+		drm_info(&ptdev->base,
+			 "G720: HOST_POWER unavailable, trying legacy SHADER_PWRON");
+
+		gpu_write64(ptdev, SHADER_PWRON, shader_mask);
+
+		ret = gpu_read64_relaxed_poll_timeout(ptdev, SHADER_READY,
+						      val,
+						      (shader_mask & val) == shader_mask,
+						      100, 100000);
+		if (ret) {
+			drm_err(&ptdev->base,
+				"G720: legacy shader power-on failed (ready=0x%llx)",
+				val);
+			return ret;
+		}
+		drm_info(&ptdev->base,
+			 "G720: legacy shader power-on succeeded (ready=0x%llx)", val);
+		return 0;
+	}
+
+	/* Wait for any pending power transitions */
+	ret = gpu_read64_relaxed_poll_timeout(ptdev, HOST_POWER_SHADER_PWRTRANS,
+					      val, !(shader_mask & val),
+					      100, 20000);
+	if (ret) {
+		drm_err(&ptdev->base,
+			"G720: timeout waiting for shader power transition");
+		return ret;
+	}
+
+	/* Write shader core mask to PWR_CMDARG */
+	gpu_write64(ptdev, PWR_CMDARG, shader_mask);
+
+	/* Issue power-up command for shader domain */
+	gpu_write(ptdev, PWR_COMMAND,
+		  PWR_COMMAND_DOMAIN_SHADER | PWR_COMMAND_POWER_UP);
+
+	/* Wait for shaders to become ready */
+	ret = gpu_read64_relaxed_poll_timeout(ptdev, HOST_POWER_SHADER_READY,
+					      val, (shader_mask & val) == shader_mask,
+					      100, 100000);
+	if (ret) {
+		drm_err(&ptdev->base,
+			"G720: timeout waiting for shader ready (mask=0x%llx ready=0x%llx)",
+			shader_mask, val);
+		return ret;
+	}
+
+	drm_info(&ptdev->base, "G720: shader cores powered on (ready=0x%llx)",
+		 val);
+
+	return 0;
 }
 
 /**

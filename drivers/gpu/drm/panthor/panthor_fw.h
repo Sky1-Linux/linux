@@ -170,7 +170,15 @@ struct panthor_fw_csg_input_iface {
 #define CSG_EP_REQ_PRIORITY(x)			(((x) << 28) & GENMASK(31, 28))
 #define CSG_EP_REQ_PRIORITY_MASK		GENMASK(31, 28)
 	u32 endpoint_req;
-	u32 reserved2[2];
+	/*
+	 * G720+ uses 64-bit endpoint_req at offset 0x38 (endpoint_req_64).
+	 * Older GPUs use 32-bit endpoint_req at 0x34 + endpoint_req_hi at 0x38.
+	 */
+#define CSG_EP_REQ_NEURAL(x)			(((u64)(x) << 32) & GENMASK_ULL(39, 32))
+#define CSG_EP_REQ_COMP_PRI_THRESH(x)		(((u64)(x) << 40) & GENMASK_ULL(47, 40))
+#define CSG_EP_REQ_COMP_PRI_RATIO(x)		(((u64)(x) << 48) & GENMASK_ULL(51, 48))
+	u32 endpoint_req_hi;
+	u32 reserved2;
 	u64 suspend_buf;
 	u64 protm_suspend_buf;
 	u32 config;
@@ -221,10 +229,11 @@ struct panthor_fw_global_input_iface {
 #define GLB_PERFCNT_THRESHOLD			BIT(24)
 #define GLB_PERFCNT_OVERFLOW			BIT(25)
 #define GLB_IDLE				BIT(26)
+#define GLB_FATAL				BIT(27)
 #define GLB_DBG_CSF				BIT(30)
 #define GLB_DBG_HOST				BIT(31)
 #define GLB_REQ_MASK				GENMASK(10, 0)
-#define GLB_EVT_MASK				GENMASK(26, 20)
+#define GLB_EVT_MASK				GENMASK(27, 20)
 	u32 req;
 	u32 ack_irq_mask;
 	u32 doorbell_req;

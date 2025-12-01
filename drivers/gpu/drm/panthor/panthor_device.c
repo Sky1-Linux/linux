@@ -6,6 +6,7 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/mm.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
 #include <linux/pm_runtime.h>
@@ -27,6 +28,15 @@
 static int panthor_gpu_coherency_init(struct panthor_device *ptdev)
 {
 	ptdev->coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
+
+	/*
+	 * Sky1 workaround: Force coherent mode regardless of DTS setting.
+	 * The vendor kernel unconditionally uses SH_CPU_INNER shareable mode
+	 * for memory attributes. Without this, GPU jobs timeout because the
+	 * memory coherency protocol doesn't match hardware expectations.
+	 */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali"))
+		ptdev->coherent = true;
 
 	if (!ptdev->coherent)
 		return 0;
@@ -141,7 +151,13 @@ static int panthor_reset_init(struct panthor_device *ptdev)
 	struct platform_device *pdev = to_platform_device(ptdev->base.dev);
 	struct resource *res;
 
-	ptdev->rstc = devm_reset_control_array_get_optional_exclusive(ptdev->base.dev);
+	/*
+	 * Get only the "gpu_reset" by name, NOT the array of all resets.
+	 * Sky1 has two resets: gpu_rcsu_reset and gpu_reset.
+	 * The vendor driver only uses gpu_reset - asserting gpu_rcsu_reset
+	 * appears to disable the HOST_POWER register interface.
+	 */
+	ptdev->rstc = devm_reset_control_get_optional_exclusive(ptdev->base.dev, "gpu_reset");
 	if (IS_ERR(ptdev->rstc)) {
 		drm_err(&ptdev->base, "get reset failed %ld\n", PTR_ERR(ptdev->rstc));
 		return PTR_ERR(ptdev->rstc);
@@ -158,6 +174,9 @@ static int panthor_reset_init(struct panthor_device *ptdev)
 			ptdev->rcsu = NULL;
 		}
 	}
+
+	drm_info(&ptdev->base, "Sky1: reset_ctrl=%p rcsu=%p",
+		 ptdev->rstc, ptdev->rcsu);
 
 	/* Don't deassert reset here - let panthor_platform_reset() do it
 	 * during resume when clocks are enabled.
@@ -178,14 +197,22 @@ static void panthor_platform_reset(struct panthor_device *ptdev)
 	usleep_range(10, 20);
 	reset_control_deassert(ptdev->rstc);
 
-	/* Q-channel clock gating disabled - vendor doesn't use RCSU 0x218 */
-#if 0
+	/*
+	 * Sky1 Q-channel clock gating: Enable after reset.
+	 * Vendor enables this in pm_callback_power_on() after execute_gpu_reset().
+	 * The Q-channel allows GPU to request clock gating from the RCSU.
+	 */
 	if (ptdev->rcsu) {
-		u32 val = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
-		val |= SKY1_RCSU_QCHANNEL_CLK_GATE_EN;
-		writel(val, ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
+		u32 pgctrl_before = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
+		u32 pgctrl_after;
+
+		writel(pgctrl_before | SKY1_RCSU_QCHANNEL_CLK_GATE_EN,
+		       ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
+
+		pgctrl_after = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
+		drm_info(&ptdev->base, "Sky1: RCSU PGCTRL: 0x%x -> 0x%x",
+			 pgctrl_before, pgctrl_after);
 	}
-#endif
 }
 
 void panthor_device_unplug(struct panthor_device *ptdev)
@@ -721,6 +748,17 @@ int panthor_device_suspend(struct device *dev)
 	}
 
 	panthor_devfreq_suspend(ptdev);
+
+	/*
+	 * Sky1 Q-channel clock gating: Disable before clock disable.
+	 * Vendor disables this in pm_callback_runtime_off() before going
+	 * to suspend. Must happen before clocks are turned off.
+	 */
+	if (ptdev->rcsu) {
+		u32 val = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
+		val &= ~SKY1_RCSU_QCHANNEL_CLK_GATE_EN;
+		writel(val, ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
+	}
 
 	clk_disable_unprepare(ptdev->clks.coregroup);
 	clk_disable_unprepare(ptdev->clks.stacks);

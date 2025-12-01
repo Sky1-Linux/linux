@@ -5,6 +5,7 @@
 #include <asm/arch_timer.h>
 #endif
 
+#include <linux/atomic.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
 #include <linux/firmware.h>
@@ -978,12 +979,41 @@ static int panthor_fw_init_ifaces(struct panthor_device *ptdev)
 static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 {
 	struct panthor_fw_global_iface *glb_iface = panthor_fw_get_glb_iface(ptdev);
+	bool is_sky1 = of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali");
+	u64 shader_ready = 0;
 
-	/* Enable all cores. */
-	glb_iface->input->core_en_mask = ptdev->gpu_info.shader_present;
+	/*
+	 * Sky1: Shaders were pre-powered in panthor_fw_init() before MCU boot.
+	 * Read SHADER_READY to get the actual powered cores for core_en_mask.
+	 */
+	if (is_sky1 && GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
+		shader_ready = gpu_read64(ptdev, SHADER_READY);
+		drm_info(&ptdev->base, "Sky1: shader_ready=0x%llx (pre-powered)",
+			 shader_ready);
+	}
+
+	/*
+	 * Tell MCU which cores are available. For Sky1, this is the cores
+	 * we pre-powered before MCU boot. For other platforms, it's shader_present.
+	 */
+	if (is_sky1 && shader_ready)
+		glb_iface->input->core_en_mask = shader_ready;
+	else
+		glb_iface->input->core_en_mask = ptdev->gpu_info.shader_present;
 
 	/* Setup timers. */
-	glb_iface->input->poweroff_timer = panthor_fw_conv_timeout(ptdev, PWROFF_HYSTERESIS_US);
+	if (is_sky1) {
+		/*
+		 * Disable MCU shader power management (poweroff_timer=0) so
+		 * MCU just dispatches jobs to already-powered cores without
+		 * trying to use HOST_POWER for activation.
+		 */
+		glb_iface->input->poweroff_timer = 0;
+		drm_info(&ptdev->base, "Sky1: poweroff_timer=0, core_en_mask=0x%llx",
+			 glb_iface->input->core_en_mask);
+	} else {
+		glb_iface->input->poweroff_timer = panthor_fw_conv_timeout(ptdev, PWROFF_HYSTERESIS_US);
+	}
 	glb_iface->input->progress_timer = PROGRESS_TIMEOUT_CYCLES >> PROGRESS_TIMEOUT_SCALE_SHIFT;
 	glb_iface->input->idle_timer = panthor_fw_conv_timeout(ptdev, IDLE_HYSTERESIS_US);
 
@@ -992,8 +1022,12 @@ static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 					 GLB_PING |
 					 GLB_CFG_PROGRESS_TIMER |
 					 GLB_CFG_POWEROFF_TIMER |
+					 GLB_PROTM_ENTER |
+					 GLB_PROTM_EXIT |
+					 GLB_FWCFG_UPDATE |
 					 GLB_IDLE_EN |
-					 GLB_IDLE;
+					 GLB_IDLE |
+					 GLB_FATAL;
 
 	panthor_fw_update_reqs(glb_iface, req, GLB_IDLE_EN, GLB_IDLE_EN);
 	panthor_fw_toggle_reqs(glb_iface, req, ack,
@@ -1001,16 +1035,59 @@ static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 			       GLB_CFG_POWEROFF_TIMER |
 			       GLB_CFG_PROGRESS_TIMER);
 
+	/* Ring doorbell to notify MCU of configuration update */
 	gpu_write(ptdev, CSF_DOORBELL(CSF_GLB_DOORBELL_ID), 1);
+
+	/*
+	 * Sky1: Wait for MCU to acknowledge core allocation config.
+	 * Vendor driver does this in KBASE_MCU_HCTL_CORES_NOTIFY_PEND state.
+	 */
+	if (is_sky1) {
+		u32 acked = 0;
+		int ret = panthor_fw_glb_wait_acks(ptdev,
+						   GLB_CFG_ALLOC_EN |
+						   GLB_CFG_POWEROFF_TIMER,
+						   &acked, 1000);
+		if (ret)
+			drm_warn(&ptdev->base,
+				 "Sky1: GLB config ack timeout (acked=0x%x)", acked);
+		else
+			drm_info(&ptdev->base, "Sky1: MCU acknowledged core config");
+	}
+
+	/*
+	 * G720+ on non-Sky1 platforms: Use HOST_POWER interface.
+	 * (Sky1 already powered cores above via legacy path)
+	 */
+	if (!is_sky1 && GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
+		drm_info(&ptdev->base,
+			 "Before shader power: MCU_STATUS=0x%08x PWR_STATUS=0x%016llx",
+			 gpu_read(ptdev, MCU_STATUS), gpu_read64(ptdev, PWR_STATUS));
+		panthor_gpu_g720_shader_power_on(ptdev);
+	}
 
 	/* Kick the watchdog. */
 	mod_delayed_work(ptdev->reset.wq, &ptdev->fw->watchdog.ping_work,
 			 msecs_to_jiffies(PING_INTERVAL_MS));
 }
 
+static atomic_t job_irq_count = ATOMIC_INIT(0);
+
 static void panthor_job_irq_handler(struct panthor_device *ptdev, u32 status)
 {
+	int irq_num = atomic_inc_return(&job_irq_count);
+
 	gpu_write(ptdev, JOB_INT_CLEAR, status);
+
+	/*
+	 * Ensure IRQ clear write completes before reading FW interface memory.
+	 * MCU and CPU share Outer Shareable domain - without this barrier,
+	 * subsequent reads of CSG_ACK may return stale data, causing false
+	 * timeout detection even when firmware has responded.
+	 */
+	dmb(osh);
+
+	drm_dbg(&ptdev->base, "JOB_IRQ #%d: status=0x%08x", irq_num, status);
 
 	if (!ptdev->fw->booted && (status & JOB_INT_GLOBAL_IF))
 		ptdev->fw->booted = true;
@@ -1133,6 +1210,21 @@ int panthor_fw_post_reset(struct panthor_device *ptdev)
 		struct panthor_fw_global_iface *glb_iface = panthor_fw_get_glb_iface(ptdev);
 
 		panthor_fw_update_reqs(glb_iface, req, 0, GLB_HALT);
+	}
+
+	/*
+	 * Sky1 G720: Pre-power shaders before MCU restart, same as initial boot.
+	 * Shaders were powered down during suspend, so we need to re-power them
+	 * before MCU comes back up.
+	 */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali") &&
+	    GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
+		ret = panthor_gpu_g720_shader_power_on(ptdev);
+		if (ret) {
+			drm_err(&ptdev->base,
+				"Sky1: Failed to re-power shaders on resume: %d", ret);
+			return ret;
+		}
 	}
 
 	ret = panthor_fw_start(ptdev);
@@ -1367,6 +1459,28 @@ int panthor_fw_init(struct panthor_device *ptdev)
 	ret = panthor_gpu_l2_power_on(ptdev);
 	if (ret)
 		return ret;
+
+	/*
+	 * Sky1 G720: Pre-power shaders via legacy interface BEFORE MCU boot.
+	 * HOST_POWER interface is non-functional on Sky1 (PWR_STATUS=0), so
+	 * we must power shaders via SHADER_PWRON. MCU must find shaders
+	 * already powered when it boots, otherwise it may try to use
+	 * HOST_POWER for activation and fail.
+	 */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali") &&
+	    GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
+		drm_info(&ptdev->base,
+			 "Sky1: Pre-powering shaders before MCU boot");
+		ret = panthor_gpu_g720_shader_power_on(ptdev);
+		if (ret) {
+			drm_err(&ptdev->base,
+				"Sky1: Failed to pre-power shaders: %d", ret);
+			return ret;
+		}
+		drm_info(&ptdev->base,
+			 "Sky1: Shaders powered, SHADER_READY=0x%llx",
+			 gpu_read64(ptdev, SHADER_READY));
+	}
 
 	fw->vm = panthor_vm_create(ptdev, true,
 				   0, SZ_4G,
