@@ -73,9 +73,6 @@ static int panthor_clk_init(struct panthor_device *ptdev)
 				     "get 'coregroup' clock failed");
 
 	drm_info(&ptdev->base, "clock rate = %lu\n", clk_get_rate(ptdev->clks.core));
-	drm_info(&ptdev->base, "stacks clock = %s (rate=%lu)\n",
-		 ptdev->clks.stacks ? "acquired" : "NOT acquired",
-		 ptdev->clks.stacks ? clk_get_rate(ptdev->clks.stacks) : 0);
 	return 0;
 }
 
@@ -175,9 +172,6 @@ static int panthor_reset_init(struct panthor_device *ptdev)
 		}
 	}
 
-	drm_info(&ptdev->base, "Sky1: reset_ctrl=%p rcsu=%p",
-		 ptdev->rstc, ptdev->rcsu);
-
 	/* Don't deassert reset here - let panthor_platform_reset() do it
 	 * during resume when clocks are enabled.
 	 */
@@ -203,15 +197,10 @@ static void panthor_platform_reset(struct panthor_device *ptdev)
 	 * The Q-channel allows GPU to request clock gating from the RCSU.
 	 */
 	if (ptdev->rcsu) {
-		u32 pgctrl_before = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
-		u32 pgctrl_after;
+		u32 val = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
 
-		writel(pgctrl_before | SKY1_RCSU_QCHANNEL_CLK_GATE_EN,
+		writel(val | SKY1_RCSU_QCHANNEL_CLK_GATE_EN,
 		       ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
-
-		pgctrl_after = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
-		drm_info(&ptdev->base, "Sky1: RCSU PGCTRL: 0x%x -> 0x%x",
-			 pgctrl_before, pgctrl_after);
 	}
 }
 

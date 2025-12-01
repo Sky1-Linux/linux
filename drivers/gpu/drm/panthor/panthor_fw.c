@@ -5,7 +5,6 @@
 #include <asm/arch_timer.h>
 #endif
 
-#include <linux/atomic.h>
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
 #include <linux/firmware.h>
@@ -986,11 +985,8 @@ static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 	 * Sky1: Shaders were pre-powered in panthor_fw_init() before MCU boot.
 	 * Read SHADER_READY to get the actual powered cores for core_en_mask.
 	 */
-	if (is_sky1 && GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
+	if (is_sky1 && GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12)
 		shader_ready = gpu_read64(ptdev, SHADER_READY);
-		drm_info(&ptdev->base, "Sky1: shader_ready=0x%llx (pre-powered)",
-			 shader_ready);
-	}
 
 	/*
 	 * Tell MCU which cores are available. For Sky1, this is the cores
@@ -1009,8 +1005,6 @@ static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 		 * trying to use HOST_POWER for activation.
 		 */
 		glb_iface->input->poweroff_timer = 0;
-		drm_info(&ptdev->base, "Sky1: poweroff_timer=0, core_en_mask=0x%llx",
-			 glb_iface->input->core_en_mask);
 	} else {
 		glb_iface->input->poweroff_timer = panthor_fw_conv_timeout(ptdev, PWROFF_HYSTERESIS_US);
 	}
@@ -1051,32 +1045,22 @@ static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 		if (ret)
 			drm_warn(&ptdev->base,
 				 "Sky1: GLB config ack timeout (acked=0x%x)", acked);
-		else
-			drm_info(&ptdev->base, "Sky1: MCU acknowledged core config");
 	}
 
 	/*
 	 * G720+ on non-Sky1 platforms: Use HOST_POWER interface.
 	 * (Sky1 already powered cores above via legacy path)
 	 */
-	if (!is_sky1 && GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
-		drm_info(&ptdev->base,
-			 "Before shader power: MCU_STATUS=0x%08x PWR_STATUS=0x%016llx",
-			 gpu_read(ptdev, MCU_STATUS), gpu_read64(ptdev, PWR_STATUS));
+	if (!is_sky1 && GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12)
 		panthor_gpu_g720_shader_power_on(ptdev);
-	}
 
 	/* Kick the watchdog. */
 	mod_delayed_work(ptdev->reset.wq, &ptdev->fw->watchdog.ping_work,
 			 msecs_to_jiffies(PING_INTERVAL_MS));
 }
 
-static atomic_t job_irq_count = ATOMIC_INIT(0);
-
 static void panthor_job_irq_handler(struct panthor_device *ptdev, u32 status)
 {
-	int irq_num = atomic_inc_return(&job_irq_count);
-
 	gpu_write(ptdev, JOB_INT_CLEAR, status);
 
 	/*
@@ -1086,8 +1070,6 @@ static void panthor_job_irq_handler(struct panthor_device *ptdev, u32 status)
 	 * timeout detection even when firmware has responded.
 	 */
 	dmb(osh);
-
-	drm_dbg(&ptdev->base, "JOB_IRQ #%d: status=0x%08x", irq_num, status);
 
 	if (!ptdev->fw->booted && (status & JOB_INT_GLOBAL_IF))
 		ptdev->fw->booted = true;
@@ -1469,17 +1451,9 @@ int panthor_fw_init(struct panthor_device *ptdev)
 	 */
 	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali") &&
 	    GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
-		drm_info(&ptdev->base,
-			 "Sky1: Pre-powering shaders before MCU boot");
 		ret = panthor_gpu_g720_shader_power_on(ptdev);
-		if (ret) {
-			drm_err(&ptdev->base,
-				"Sky1: Failed to pre-power shaders: %d", ret);
+		if (ret)
 			return ret;
-		}
-		drm_info(&ptdev->base,
-			 "Sky1: Shaders powered, SHADER_READY=0x%llx",
-			 gpu_read64(ptdev, SHADER_READY));
 	}
 
 	fw->vm = panthor_vm_create(ptdev, true,

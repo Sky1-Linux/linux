@@ -374,11 +374,8 @@ int panthor_gpu_g720_shader_power_on(struct panthor_device *ptdev)
 	if (is_sky1) {
 		/* Check if already powered via legacy SHADER_READY */
 		val = gpu_read64(ptdev, SHADER_READY);
-		if ((val & shader_mask) == shader_mask) {
-			drm_dbg(&ptdev->base,
-				"Sky1: shaders already powered (ready=0x%llx)", val);
+		if ((val & shader_mask) == shader_mask)
 			return 0;
-		}
 
 		/* Power on via legacy SHADER_PWRON */
 		gpu_write64(ptdev, SHADER_PWRON, shader_mask);
@@ -392,34 +389,22 @@ int panthor_gpu_g720_shader_power_on(struct panthor_device *ptdev)
 				"Sky1: shader power-on failed (ready=0x%llx)", val);
 			return ret;
 		}
-		drm_info(&ptdev->base,
-			 "Sky1: shaders powered via legacy path (ready=0x%llx)", val);
 		return 0;
 	}
 
 	/* Non-Sky1 G720 platforms: Try HOST_POWER interface first */
-
-	/* Debug: read various HOST_POWER registers */
 	pwr_status = gpu_read64(ptdev, PWR_STATUS);
-	val = gpu_read64(ptdev, HOST_POWER_SHADER_PRESENT);
-	drm_info(&ptdev->base,
-		 "G720: PWR_STATUS=0x%016llx HP_SHADER_PRESENT=0x%llx (vs gpu_info=0x%llx)",
-		 pwr_status, val, shader_mask);
 
 	/* Check if already powered */
 	val = gpu_read64(ptdev, HOST_POWER_SHADER_READY);
-	if ((val & shader_mask) == shader_mask) {
-		drm_info(&ptdev->base, "G720: shaders already powered (ready=0x%llx)", val);
+	if ((val & shader_mask) == shader_mask)
 		return 0;
-	}
 
 	/*
 	 * If PWR_STATUS is 0, the HOST_POWER interface may not be initialized.
 	 * Try sending RETRACT command to request shader power control from MCU.
 	 */
 	if (pwr_status == 0) {
-		drm_info(&ptdev->base, "G720: PWR_STATUS=0, attempting to retract power control");
-
 		/* Send RETRACT command to request shader power control from MCU */
 		gpu_write64(ptdev, PWR_CMDARG, 0);
 		gpu_write(ptdev, PWR_COMMAND,
@@ -432,12 +417,9 @@ int panthor_gpu_g720_shader_power_on(struct panthor_device *ptdev)
 						      100, 50000);
 		if (ret) {
 			drm_warn(&ptdev->base,
-				 "G720: RETRACT failed, PWR_STATUS still 0x%llx",
+				 "G720: RETRACT failed, PWR_STATUS=0x%llx",
 				 pwr_status);
 			/* Continue to legacy path below */
-		} else {
-			drm_info(&ptdev->base,
-				 "G720: RETRACT succeeded, PWR_STATUS=0x%llx", pwr_status);
 		}
 	}
 
@@ -445,11 +427,8 @@ int panthor_gpu_g720_shader_power_on(struct panthor_device *ptdev)
 	 * If shader power is delegated to firmware, we cannot control it.
 	 * The firmware should power on shaders based on core_en_mask.
 	 */
-	if (pwr_status & PWR_STATUS_DELEGATED_SHADER) {
-		drm_info(&ptdev->base,
-			 "G720: shader power delegated to firmware, skipping host power-on");
+	if (pwr_status & PWR_STATUS_DELEGATED_SHADER)
 		return 0;
-	}
 
 	/*
 	 * If ALLOW_SHADER is not set after RETRACT attempt, fall back to
@@ -457,9 +436,6 @@ int panthor_gpu_g720_shader_power_on(struct panthor_device *ptdev)
 	 * fully functional but legacy interface is available.
 	 */
 	if (!(pwr_status & PWR_STATUS_ALLOW_SHADER)) {
-		drm_info(&ptdev->base,
-			 "G720: HOST_POWER unavailable, trying legacy SHADER_PWRON");
-
 		gpu_write64(ptdev, SHADER_PWRON, shader_mask);
 
 		ret = gpu_read64_relaxed_poll_timeout(ptdev, SHADER_READY,
@@ -470,11 +446,8 @@ int panthor_gpu_g720_shader_power_on(struct panthor_device *ptdev)
 			drm_err(&ptdev->base,
 				"G720: legacy shader power-on failed (ready=0x%llx)",
 				val);
-			return ret;
 		}
-		drm_info(&ptdev->base,
-			 "G720: legacy shader power-on succeeded (ready=0x%llx)", val);
-		return 0;
+		return ret;
 	}
 
 	/* Wait for any pending power transitions */
@@ -502,13 +475,9 @@ int panthor_gpu_g720_shader_power_on(struct panthor_device *ptdev)
 		drm_err(&ptdev->base,
 			"G720: timeout waiting for shader ready (mask=0x%llx ready=0x%llx)",
 			shader_mask, val);
-		return ret;
 	}
 
-	drm_info(&ptdev->base, "G720: shader cores powered on (ready=0x%llx)",
-		 val);
-
-	return 0;
+	return ret;
 }
 
 /**
