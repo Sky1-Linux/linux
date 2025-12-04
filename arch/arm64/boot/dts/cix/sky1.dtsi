@@ -1100,6 +1100,7 @@
 			#dma-cells = <2>;
 			dma-channels = <8>;
 			dma-requests = <20>;
+			power-domains = <&smc_devpd SKY1_PD_AUDIO>;
 			clocks = <&audss_clk CLK_DMAC_AXI>;
 			clock-names = "axiclk";
 			arm,clk-enable-atomic;

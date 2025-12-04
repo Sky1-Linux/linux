@@ -3,12 +3,17 @@
 // Arm DMA-350 driver
 
 #include <linux/bitfield.h>
+#include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
 #include <linux/io.h>
 #include <linux/of.h>
+#include <linux/of_dma.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
+#include <linux/reset.h>
 
 #include "dmaengine.h"
 #include "virt-dma.h"
@@ -188,10 +193,17 @@ struct d350_chan {
 	bool has_trig;
 	bool has_wrap;
 	bool coherent;
+	/* Slave DMA configuration */
+	struct dma_slave_config slave_cfg;
+	u32 req_line;		/* DMA request/trigger line */
+	dma_addr_t dev_addr;	/* Peripheral address */
+	enum dma_transfer_direction dir;
 };
 
 struct d350 {
 	struct dma_device dma;
+	struct clk *clk;
+	struct reset_control *rst;
 	int nchan;
 	int nreq;
 	struct d350_chan channels[] __counted_by(nchan);
@@ -523,10 +535,95 @@ static void d350_free_chan_resources(struct dma_chan *chan)
 	vchan_free_chan_resources(&dch->vc);
 }
 
+/*
+ * Slave DMA support
+ */
+static int d350_device_config(struct dma_chan *chan,
+			      struct dma_slave_config *config)
+{
+	struct d350_chan *dch = to_d350_chan(chan);
+
+	memcpy(&dch->slave_cfg, config, sizeof(*config));
+
+	if (config->direction == DMA_MEM_TO_DEV) {
+		dch->dev_addr = config->dst_addr;
+		dch->dir = DMA_MEM_TO_DEV;
+	} else if (config->direction == DMA_DEV_TO_MEM) {
+		dch->dev_addr = config->src_addr;
+		dch->dir = DMA_DEV_TO_MEM;
+	}
+
+	return 0;
+}
+
+static struct dma_chan *d350_of_xlate(struct of_phandle_args *dma_spec,
+				      struct of_dma *ofdma)
+{
+	struct d350 *dmac = ofdma->of_dma_data;
+	struct dma_chan *chan;
+	struct d350_chan *dch;
+	u32 request = 0;
+	u32 channel_id = 0;
+
+	if (dma_spec->args_count >= 1)
+		request = dma_spec->args[0];
+	if (dma_spec->args_count >= 2)
+		channel_id = dma_spec->args[1];
+
+	/* Channel 0xFF means dynamic allocation */
+	if (channel_id == 0xFF) {
+		chan = dma_get_any_slave_channel(&dmac->dma);
+	} else {
+		if (channel_id >= dmac->nchan)
+			return NULL;
+		chan = dma_get_slave_channel(&dmac->channels[channel_id].vc.chan);
+	}
+
+	if (!chan)
+		return NULL;
+
+	dch = to_d350_chan(chan);
+	dch->req_line = request;
+
+	return chan;
+}
+
+static struct dma_async_tx_descriptor *d350_prep_slave_sg(
+	struct dma_chan *chan, struct scatterlist *sgl, unsigned int sg_len,
+	enum dma_transfer_direction dir, unsigned long flags, void *context)
+{
+	struct d350_chan *dch = to_d350_chan(chan);
+	struct device *dev = chan->device->dev;
+
+	/* For now, just log that slave_sg was called - full implementation needed */
+	dev_dbg(dev, "prep_slave_sg: chan=%d dir=%d sg_len=%d\n",
+		dch->vc.chan.chan_id, dir, sg_len);
+
+	/* TODO: Implement scatter-gather slave DMA */
+	return NULL;
+}
+
+static struct dma_async_tx_descriptor *d350_prep_dma_cyclic(
+	struct dma_chan *chan, dma_addr_t buf_addr, size_t buf_len,
+	size_t period_len, enum dma_transfer_direction dir,
+	unsigned long flags)
+{
+	struct d350_chan *dch = to_d350_chan(chan);
+	struct device *dev = chan->device->dev;
+
+	/* For now, just log that cyclic was called - full implementation needed */
+	dev_dbg(dev, "prep_dma_cyclic: chan=%d dir=%d buf_len=%zu period_len=%zu\n",
+		dch->vc.chan.chan_id, dir, buf_len, period_len);
+
+	/* TODO: Implement cyclic DMA for audio */
+	return NULL;
+}
+
 static int d350_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct d350 *dmac;
+	struct clk *clk;
 	void __iomem *base;
 	u32 reg;
 	int ret, nchan, dw, aw, r, p;
@@ -536,12 +633,75 @@ static int d350_probe(struct platform_device *pdev)
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
+	/* Get clock (optional - some platforms may not have one) */
+	clk = devm_clk_get_optional(dev, "axiclk");
+	if (IS_ERR(clk))
+		return dev_err_probe(dev, PTR_ERR(clk), "Failed to get clock\n");
+
+	/* Fallback to unnamed clock if axiclk not found */
+	if (!clk) {
+		clk = devm_clk_get_optional(dev, NULL);
+		if (IS_ERR(clk))
+			return dev_err_probe(dev, PTR_ERR(clk), "Failed to get clock\n");
+	}
+
+	/*
+	 * Enable runtime PM to activate power domain. The runtime_resume
+	 * callback handles NULL dmac gracefully during this initial call.
+	 * We then manually enable the clock since dmac isn't set up yet.
+	 */
+	dev_info(dev, "DMA-350 probe: enabling pm_runtime\n");
+	pm_runtime_enable(dev);
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret < 0) {
+		pm_runtime_disable(dev);
+		return dev_err_probe(dev, ret, "Failed to power on device\n");
+	}
+	dev_info(dev, "DMA-350 probe: pm_runtime_resume_and_get returned %d\n", ret);
+
+	/* Manually enable clock for initial probe (runtime_resume skipped it) */
+	dev_info(dev, "DMA-350 probe: enabling clock %pC\n", clk);
+	ret = clk_prepare_enable(clk);
+	if (ret) {
+		pm_runtime_put(dev);
+		pm_runtime_disable(dev);
+		return dev_err_probe(dev, ret, "Failed to enable clock\n");
+	}
+
+	/* Get and deassert reset (optional - some platforms may not have one) */
+	{
+		struct reset_control *rst;
+
+		rst = devm_reset_control_get_optional_exclusive(dev, "dma_reset");
+		if (IS_ERR(rst)) {
+			ret = PTR_ERR(rst);
+			dev_err(dev, "Failed to get reset: %d\n", ret);
+			goto err_pm_put;
+		}
+		if (rst) {
+			dev_info(dev, "DMA-350 probe: deasserting reset\n");
+			ret = reset_control_deassert(rst);
+			if (ret) {
+				dev_err(dev, "Failed to deassert reset: %d\n", ret);
+				goto err_pm_put;
+			}
+			/* Small delay after reset deassert */
+			usleep_range(10, 20);
+		}
+	}
+
+	dev_info(dev, "DMA-350 probe: about to read IIDR at %p + 0x%x\n",
+		 base, DMAINFO + IIDR);
+
 	reg = readl_relaxed(base + DMAINFO + IIDR);
 	r = FIELD_GET(IIDR_VARIANT, reg);
 	p = FIELD_GET(IIDR_REVISION, reg);
 	if (FIELD_GET(IIDR_IMPLEMENTER, reg) != IMPLEMENTER_ARM ||
-	    FIELD_GET(IIDR_PRODUCTID, reg) != PRODUCTID_DMA350)
-		return dev_err_probe(dev, -ENODEV, "Not a DMA-350!");
+	    FIELD_GET(IIDR_PRODUCTID, reg) != PRODUCTID_DMA350) {
+		ret = -ENODEV;
+		dev_err(dev, "Not a DMA-350!");
+		goto err_pm_put;
+	}
 
 	reg = readl_relaxed(base + DMAINFO + DMA_BUILDCFG0);
 	nchan = FIELD_GET(DMA_CFG_NUM_CHANNELS, reg) + 1;
@@ -552,10 +712,14 @@ static int d350_probe(struct platform_device *pdev)
 	coherent = device_get_dma_attr(dev) == DEV_DMA_COHERENT;
 
 	dmac = devm_kzalloc(dev, struct_size(dmac, channels, nchan), GFP_KERNEL);
-	if (!dmac)
-		return -ENOMEM;
+	if (!dmac) {
+		ret = -ENOMEM;
+		goto err_pm_put;
+	}
 
 	dmac->nchan = nchan;
+	dmac->clk = clk;
+	platform_set_drvdata(pdev, dmac);
 
 	reg = readl_relaxed(base + DMAINFO + DMA_BUILDCFG1);
 	dmac->nreq = FIELD_GET(DMA_CFG_NUM_TRIGGER_IN, reg);
@@ -567,13 +731,19 @@ static int d350_probe(struct platform_device *pdev)
 		dmac->dma.src_addr_widths |= BIT(i);
 		dmac->dma.dst_addr_widths |= BIT(i);
 	}
-	dmac->dma.directions = BIT(DMA_MEM_TO_MEM);
+	dmac->dma.directions = BIT(DMA_MEM_TO_MEM) | BIT(DMA_MEM_TO_DEV) | BIT(DMA_DEV_TO_MEM);
 	dmac->dma.descriptor_reuse = true;
 	dmac->dma.residue_granularity = DMA_RESIDUE_GRANULARITY_BURST;
 	dmac->dma.device_alloc_chan_resources = d350_alloc_chan_resources;
 	dmac->dma.device_free_chan_resources = d350_free_chan_resources;
+	dmac->dma.device_config = d350_device_config;
 	dma_cap_set(DMA_MEMCPY, dmac->dma.cap_mask);
+	dma_cap_set(DMA_SLAVE, dmac->dma.cap_mask);
+	dma_cap_set(DMA_CYCLIC, dmac->dma.cap_mask);
+	dma_cap_set(DMA_PRIVATE, dmac->dma.cap_mask);
 	dmac->dma.device_prep_dma_memcpy = d350_prep_memcpy;
+	dmac->dma.device_prep_slave_sg = d350_prep_slave_sg;
+	dmac->dma.device_prep_dma_cyclic = d350_prep_dma_cyclic;
 	dmac->dma.device_pause = d350_pause;
 	dmac->dma.device_resume = d350_resume;
 	dmac->dma.device_terminate_all = d350_terminate_all;
@@ -595,10 +765,21 @@ static int d350_probe(struct platform_device *pdev)
 			dev_warn(dev, "No command link support on channel %d\n", i);
 			continue;
 		}
-		dch->irq = platform_get_irq(pdev, i);
-		if (dch->irq < 0)
-			return dev_err_probe(dev, dch->irq,
-					     "Failed to get IRQ for channel %d\n", i);
+		dch->irq = platform_get_irq_optional(pdev, i);
+		if (dch->irq < 0) {
+			/*
+			 * Some platforms (e.g., Sky1 AUDSS) provide only a single
+			 * shared interrupt for all channels. Fall back to IRQ 0.
+			 */
+			if (i > 0) {
+				dch->irq = dmac->channels[0].irq;
+				dev_dbg(dev, "Channel %d using shared IRQ %d\n",
+					i, dch->irq);
+			} else {
+				return dev_err_probe(dev, dch->irq,
+						     "Failed to get IRQ for channel %d\n", i);
+			}
+		}
 
 		dch->has_wrap = FIELD_GET(CH_CFG_HAS_WRAP, reg);
 		dch->has_trig = FIELD_GET(CH_CFG_HAS_TRIGIN, reg) &
@@ -623,24 +804,68 @@ static int d350_probe(struct platform_device *pdev)
 		dmac->dma.device_prep_dma_memset = d350_prep_memset;
 	}
 
-	platform_set_drvdata(pdev, dmac);
-
 	ret = dma_async_device_register(&dmac->dma);
-	if (ret)
-		return dev_err_probe(dev, ret, "Failed to register DMA device\n");
+	if (ret) {
+		dev_err(dev, "Failed to register DMA device: %d\n", ret);
+		goto err_pm_put;
+	}
 
+	/* Register for device tree DMA channel requests */
+	ret = of_dma_controller_register(dev->of_node, d350_of_xlate, dmac);
+	if (ret) {
+		dev_err(dev, "Failed to register OF DMA controller: %d\n", ret);
+		goto err_dma_unregister;
+	}
+
+	dev_info(dev, "DMA-350 r%dp%d initialized with %d channels\n",
+		 r, p, dmac->nchan);
 	return 0;
+
+err_dma_unregister:
+	dma_async_device_unregister(&dmac->dma);
+
+err_pm_put:
+	clk_disable_unprepare(clk);
+	pm_runtime_put(dev);
+	pm_runtime_disable(dev);
+	return ret;
 }
 
 static void d350_remove(struct platform_device *pdev)
 {
 	struct d350 *dmac = platform_get_drvdata(pdev);
 
+	of_dma_controller_free(pdev->dev.of_node);
 	dma_async_device_unregister(&dmac->dma);
+	pm_runtime_put_sync(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
 }
+
+static int __maybe_unused d350_runtime_suspend(struct device *dev)
+{
+	struct d350 *dmac = dev_get_drvdata(dev);
+
+	if (dmac && dmac->clk)
+		clk_disable_unprepare(dmac->clk);
+	return 0;
+}
+
+static int __maybe_unused d350_runtime_resume(struct device *dev)
+{
+	struct d350 *dmac = dev_get_drvdata(dev);
+
+	if (dmac && dmac->clk)
+		return clk_prepare_enable(dmac->clk);
+	return 0;
+}
+
+static const struct dev_pm_ops d350_pm_ops = {
+	SET_RUNTIME_PM_OPS(d350_runtime_suspend, d350_runtime_resume, NULL)
+};
 
 static const struct of_device_id d350_of_match[] __maybe_unused = {
 	{ .compatible = "arm,dma-350" },
+	{ .compatible = "arm,dma350-no-pause" },
 	{}
 };
 MODULE_DEVICE_TABLE(of, d350_of_match);
@@ -649,6 +874,7 @@ static struct platform_driver d350_driver = {
 	.driver = {
 		.name = "arm-dma350",
 		.of_match_table = of_match_ptr(d350_of_match),
+		.pm = &d350_pm_ops,
 	},
 	.probe = d350_probe,
 	.remove = d350_remove,
