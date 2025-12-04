@@ -1109,6 +1109,7 @@
 			arm,remote-ctrl = <&audss_cru>;
 			resets = <&audss_rst AUDSS_DMAC_SW_RST_N>;
 			reset-names = "dma_reset";
+			memory-region = <&audio_alsa>;
 			status = "disabled";
 		};
 
