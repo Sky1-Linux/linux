@@ -8,12 +8,14 @@
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
 #include <linux/io.h>
+#include <linux/mfd/syscon.h>
 #include <linux/of.h>
 #include <linux/of_dma.h>
 #include <linux/of_reserved_mem.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/regmap.h>
 #include <linux/reset.h>
 
 #include "dmaengine.h"
@@ -147,6 +149,13 @@
 #define CH_CFG_HAS_TRIGIN	BIT(5)
 #define CH_CFG_HAS_WRAP		BIT(1)
 
+/* Global interrupt control registers */
+#define DMA_CHINTRSTATUS0	0x200	/* Collated channel interrupt flags */
+#define DMA_NSEC_INTREN		0x20c	/* Non-secure interrupt enable */
+#define DMA_NSEC_INTREN_ANY	BIT(0)	/* Enable any channel interrupt */
+
+/* AUDSS CRU register for interrupt routing to AP (Sky1 specific) */
+#define AUDSS_CRU_AP_IRQ	0x54	/* Bit N enables channel N IRQ to AP */
 
 #define LINK_REGCLEAR		BIT(0)
 #define LINK_INTREN		BIT(2)
@@ -246,6 +255,9 @@ struct d350 {
 		u64 ram_cpu;	/* CPU address of RAM base */
 		u64 ram_dma;	/* DMA view of RAM base */
 	} addr_xlat;
+
+	/* Remote control regmap (e.g., AUDSS CRU for interrupt routing) */
+	struct regmap *remote_ctrl;
 
 	int nchan;
 	int nreq;
@@ -533,13 +545,20 @@ static void d350_start_cyclic(struct d350_chan *dch)
 	/* Calculate initial residue as full buffer */
 	dch->residue = dch->desc->num_periods * dch->desc->period_len;
 
-	/* Clear channel state and disable interrupts initially */
+	/* Clear channel state */
 	writel_relaxed(CH_CMD_CLEAR, dch->base + CH_CMD);
-	writel_relaxed(0, dch->base + CH_INTREN);
 
 	/* Set XSIZE to 0 - command link will provide the actual size */
 	writel_relaxed(0, dch->base + CH_XSIZE);
 	writel_relaxed(0, dch->base + CH_XSIZEHI);
+
+	/*
+	 * Enable interrupts BEFORE starting DMA.
+	 * The command link also has INTREN, but we set it early to avoid
+	 * any race condition where the first burst completes before
+	 * command link INTREN takes effect.
+	 */
+	writel_relaxed(CH_INTREN_DONE | CH_INTREN_ERR, dch->base + CH_INTREN);
 
 	/* Enable channel first */
 	writel(CH_CMD_ENABLE, dch->base + CH_CMD);
@@ -556,8 +575,9 @@ static void d350_start_cyclic(struct d350_chan *dch)
 	/* Re-enable to start command fetch */
 	writel(CH_CMD_ENABLE, dch->base + CH_CMD);
 
-	dev_info(dev, "cyclic: DMA started, LINKADDR=0x%08x\n",
-		 readl_relaxed(dch->base + CH_LINKADDR));
+	dev_info(dev, "cyclic: DMA started, LINKADDR=0x%08x NSEC_INTREN=0x%08x\n",
+		 readl_relaxed(dch->base + CH_LINKADDR),
+		 readl_relaxed(dmac->base + DMA_NSEC_INTREN));
 
 	/* Debug: check status after a short delay */
 	udelay(100);
@@ -569,6 +589,8 @@ static void d350_start_cyclic(struct d350_chan *dch)
 		 readl_relaxed(dch->base + CH_SRCADDR),
 		 readl_relaxed(dch->base + CH_DESADDR),
 		 readl_relaxed(dch->base + CH_XSIZE));
+	dev_info(dev, "cyclic: CHINTRSTATUS0=0x%08x (global pending interrupts)\n",
+		 readl_relaxed(dmac->base + DMA_CHINTRSTATUS0));
 }
 
 static void d350_start_next(struct d350_chan *dch)
@@ -722,12 +744,30 @@ static irqreturn_t d350_irq(int irq, void *data)
 static int d350_alloc_chan_resources(struct dma_chan *chan)
 {
 	struct d350_chan *dch = to_d350_chan(chan);
-	int ret = request_irq(dch->irq, d350_irq, IRQF_SHARED,
-			      dev_name(&dch->vc.chan.dev->device), dch);
-	if (!ret)
-		writel_relaxed(CH_INTREN_DONE | CH_INTREN_ERR, dch->base + CH_INTREN);
+	struct d350 *dmac = to_d350(chan->device);
+	int chan_id = dch->vc.chan.chan_id;
+	int ret;
 
-	return ret;
+	ret = request_irq(dch->irq, d350_irq, IRQF_SHARED,
+			  dev_name(&dch->vc.chan.dev->device), dch);
+	if (ret)
+		return ret;
+
+	writel_relaxed(CH_INTREN_DONE | CH_INTREN_ERR, dch->base + CH_INTREN);
+
+	/*
+	 * Enable interrupt routing to AP via remote control regmap.
+	 * On Sky1, this sets bit N in AUDSS_CRU_AP_IRQ to route channel N
+	 * interrupts to the application processor.
+	 */
+	if (dmac->remote_ctrl) {
+		regmap_update_bits(dmac->remote_ctrl, AUDSS_CRU_AP_IRQ,
+				   BIT(chan_id), BIT(chan_id));
+		dev_dbg(chan->device->dev, "Enabled IRQ routing for channel %d\n",
+			chan_id);
+	}
+
+	return 0;
 }
 
 static void d350_free_chan_resources(struct dma_chan *chan)
@@ -1148,6 +1188,23 @@ static int d350_probe(struct platform_device *pdev)
 		}
 	}
 
+	/*
+	 * Parse optional remote control regmap (e.g., AUDSS CRU).
+	 * On Sky1, this is used to route DMA interrupts to the AP.
+	 */
+	dmac->remote_ctrl = syscon_regmap_lookup_by_phandle(dev->of_node,
+							    "arm,remote-ctrl");
+	if (IS_ERR(dmac->remote_ctrl)) {
+		if (PTR_ERR(dmac->remote_ctrl) == -ENODEV)
+			dmac->remote_ctrl = NULL;  /* Optional */
+		else
+			dev_dbg(dev, "No remote control regmap: %ld\n",
+				PTR_ERR(dmac->remote_ctrl));
+		dmac->remote_ctrl = NULL;
+	} else {
+		dev_info(dev, "Using remote control regmap for interrupt routing\n");
+	}
+
 	dev_dbg(dev, "DMA-350 r%dp%d with %d channels, %d requests\n", r, p, dmac->nchan, dmac->nreq);
 
 	dmac->dma.dev = dev;
@@ -1227,6 +1284,12 @@ static int d350_probe(struct platform_device *pdev)
 		dma_cap_set(DMA_MEMSET, dmac->dma.cap_mask);
 		dmac->dma.device_prep_dma_memset = d350_prep_memset;
 	}
+
+	/*
+	 * Enable global non-secure interrupt propagation.
+	 * Without this, per-channel INTREN settings have no effect.
+	 */
+	writel_relaxed(DMA_NSEC_INTREN_ANY, base + DMA_NSEC_INTREN);
 
 	ret = dma_async_device_register(&dmac->dma);
 	if (ret) {
