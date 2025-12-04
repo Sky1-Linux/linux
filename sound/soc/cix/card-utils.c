@@ -88,6 +88,13 @@ static int cix_dailink_parsing_fmt(struct device_node *np,
 			dai_fmt |= SND_SOC_DAIFMT_CBP_CFP;
 		else
 			dai_fmt |= SND_SOC_DAIFMT_CBC_CFC;
+	} else {
+		/*
+		 * No clock master specified - default to codec as consumer
+		 * (CPU/I2S provides clocks). This matches vendor kernel
+		 * behavior from snd_soc_daifmt_clock_provider_from_bitmap(0).
+		 */
+		dai_fmt |= SND_SOC_DAIFMT_CBC_CFC;
 	}
 	of_node_put(bitclkmaster);
 	of_node_put(framemaster);
