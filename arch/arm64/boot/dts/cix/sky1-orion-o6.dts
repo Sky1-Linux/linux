@@ -2392,3 +2392,15 @@
 &cix_ipa {
 	status = "okay";
 };
+
+&npu {
+	status = "okay";
+};
+
+&sensorhub {
+	status = "okay";
+};
+
+&sfh_scp {
+	status = "okay";
+};

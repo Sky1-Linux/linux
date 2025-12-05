@@ -21,7 +21,7 @@
 /memreserve/ 0x80000000 0x6000000;
 
 / {
-	interrupt-parent = <&gic>;
+	interrupt-parent = <&pdc>;
 	#address-cells = <2>;
 	#size-cells = <2>;
 
