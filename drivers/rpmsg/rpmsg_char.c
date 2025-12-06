@@ -523,6 +523,8 @@ static void rpmsg_chrdev_remove(struct rpmsg_device *rpdev)
 static struct rpmsg_device_id rpmsg_chrdev_id_table[] = {
 	{ .name	= "rpmsg-raw" },
 	{ .name	= "rpmsg_chrdev" },
+	{ .name = "audio-decoder" },
+	{ .name = "audio-encoder" },
 	{ },
 };
 MODULE_DEVICE_TABLE(rpmsg, rpmsg_chrdev_id_table);
