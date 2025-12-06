@@ -1289,16 +1289,30 @@
 			status = "disabled";
 		};
 
-		ipb_hda: ipb-hda@070c0000 {
-			compatible = "cix,sky1-ipbloq-hda";
-			reg = <0x0 0x070c0000 0x0 0x10000>;
-			interrupts = <GIC_SPI 234 IRQ_TYPE_LEVEL_HIGH 0>;
-			clocks = <&audss_clk CLK_HDA_SYS>,
-				<&audss_clk CLK_HDA_HDA>;
-			clock-names = "sysclk", "clk48m";
-			resets = <&audss_rst AUDSS_HDA_SW_RST_N>;
-			reset-names = "hda";
-			status = "disabled";
+		/*
+		 * HDA controller sub-bus with DMA address translation.
+		 * The HDA controller sees memory at a 0x90000000 offset from CPU:
+		 * CPU addr 0xD0C00000 appears as DMA addr 0x40C00000 to HDA.
+		 */
+		hda_bus: hda-bus@070c0000 {
+			compatible = "simple-bus";
+			#address-cells = <2>;
+			#size-cells = <2>;
+			ranges = <0x0 0x070c0000  0x0 0x070c0000  0x0 0x10000>;
+			/* DMA translation: DMA addr = CPU addr - 0x90000000 */
+			dma-ranges = <0x0 0x0  0x0 0x90000000  0x0 0x80000000>;
+
+			ipb_hda: ipb-hda@070c0000 {
+				compatible = "cix,sky1-ipbloq-hda";
+				reg = <0x0 0x070c0000 0x0 0x10000>;
+				interrupts = <GIC_SPI 234 IRQ_TYPE_LEVEL_HIGH 0>;
+				clocks = <&audss_clk CLK_HDA_SYS>,
+					<&audss_clk CLK_HDA_HDA>;
+				clock-names = "sysclk", "clk48m";
+				resets = <&audss_rst AUDSS_HDA_SW_RST_N>;
+				reset-names = "hda";
+				status = "disabled";
+			};
 		};
 
 		mbox_ap2dsp: mailbox@70f0000 {

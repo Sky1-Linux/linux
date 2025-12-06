@@ -2,6 +2,7 @@
 snd-hda-intel-y := intel.o
 snd-hda-tegra-y := tegra.o
 snd-hda-acpi-y := acpi.o
+snd-hda-cix-ipbloq-y := hda_cix_ipbloq.o
 
 subdir-ccflags-y += -I$(src)/../common
 
@@ -11,3 +12,4 @@ CFLAGS_intel.o := -I$(src)
 obj-$(CONFIG_SND_HDA_INTEL) += snd-hda-intel.o
 obj-$(CONFIG_SND_HDA_TEGRA) += snd-hda-tegra.o
 obj-$(CONFIG_SND_HDA_ACPI) += snd-hda-acpi.o
+obj-$(CONFIG_SND_HDA_CIX_IPBLOQ) += snd-hda-cix-ipbloq.o
