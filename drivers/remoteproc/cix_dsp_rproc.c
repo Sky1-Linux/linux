@@ -87,7 +87,7 @@ static const struct cix_mem_region sky1_dsp_mems[CIX_MEM_REG_NUM] = {
 	/* 1M vdev0buffer */
 	{ .name = "vdev0buffer", .da = 0x3de08000, .sa = 0xcde08000, .len = 0x100000 },
 	/* 16M dsp_reserved */
-	{ .name = "dsp_reserved", .da = 0x3e000000, .sa = 0xce000000, .len = 0x1000000 },
+	{ .name = "dsp_reserved", .da = 0xce000000, .sa = 0xce000000, .len = 0x1000000 },
 };
 
 struct cix_dsp_rproc {
