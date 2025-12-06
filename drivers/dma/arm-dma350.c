@@ -709,12 +709,12 @@ static void d350_start_cyclic(struct d350_chan *dch)
 	writel_relaxed(0, dch->base + CH_XSIZEHI);
 
 	/*
-	 * Enable interrupts BEFORE starting DMA.
-	 * The command link also has INTREN, but we set it early to avoid
-	 * any race condition where the first burst completes before
-	 * command link INTREN takes effect.
+	 * For cyclic DMA, disable register-based INTREN.
+	 * Let the command link entries control interrupts.
+	 * This matches vendor behavior and avoids potential issues
+	 * with both register and command link enabling interrupts.
 	 */
-	writel_relaxed(CH_INTREN_DONE | CH_INTREN_ERR, dch->base + CH_INTREN);
+	writel_relaxed(0, dch->base + CH_INTREN);
 
 	/* Enable channel first */
 	writel(CH_CMD_ENABLE, dch->base + CH_CMD);
