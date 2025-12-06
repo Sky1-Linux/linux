@@ -13,6 +13,15 @@ config DMABUF_HEAPS_CMA
 	  by the Contiguous Memory Allocator (CMA). If your system has these
 	  regions, you should say Y here.
 
+config DMABUF_HEAPS_DSP
+	tristate "DMA-BUF DSP Heap"
+	depends on DMABUF_HEAPS && OF_RESERVED_MEM
+	help
+	  Choose this option to enable the DSP dma-buf heap. This heap is
+	  backed by a reserved memory region named "dsp_reserved_heap" in
+	  the device tree. It provides a simple shared memory buffer for
+	  communication between the host CPU and an audio DSP.
+
 config DMABUF_HEAPS_CMA_LEGACY
 	bool "Legacy DMA-BUF CMA Heap"
 	default y
