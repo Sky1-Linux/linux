@@ -599,11 +599,6 @@ static int cix_dsp_rproc_addr_init(struct cix_dsp_rproc *rproc_priv)
 		return -ENOMEM;
 
 	for (i = 0; i < CIX_MEM_REG_NUM; i++) {
-		if (!strcmp(mem_reg[i].name, "vdev0buffer") ||
-		    !strcmp(mem_reg[i].name, "vdev0vring0") ||
-		    !strcmp(mem_reg[i].name, "vdev0vring1"))
-			continue;
-
 		p_mem[i].cpu_addr = devm_ioremap_wc(dev, mem_reg[i].sa, mem_reg[i].len);
 		if (!p_mem[i].cpu_addr) {
 			dev_err(dev, "failed to remap %#x bytes from %#llx\n",
