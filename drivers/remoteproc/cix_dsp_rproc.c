@@ -772,8 +772,8 @@ static int cix_dsp_rproc_probe(struct platform_device *pdev)
 	}
 
 	rproc_priv->regmap =
-		device_syscon_regmap_lookup_by_property(&pdev->dev,
-							"cix,dsp-ctrl");
+		syscon_regmap_lookup_by_phandle(pdev->dev.of_node,
+						"cix,dsp-ctrl");
 	if (IS_ERR(rproc_priv->regmap)) {
 		dev_err(dev, "failed to find syscon\n");
 		return PTR_ERR(rproc_priv->regmap);
@@ -849,7 +849,7 @@ err_wkq:
 	return ret;
 }
 
-static int cix_dsp_rproc_remove(struct platform_device *pdev)
+static void cix_dsp_rproc_remove(struct platform_device *pdev)
 {
 	struct rproc *rproc = platform_get_drvdata(pdev);
 	struct cix_dsp_rproc *rproc_priv = rproc->priv;
@@ -858,8 +858,6 @@ static int cix_dsp_rproc_remove(struct platform_device *pdev)
 	rproc_del(rproc);
 	destroy_workqueue(rproc_priv->workqueue);
 	rproc_free(rproc);
-
-	return 0;
 }
 
 static int cix_dsp_rproc_runtime_suspend(struct device *dev)
