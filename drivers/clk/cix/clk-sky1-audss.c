@@ -412,7 +412,7 @@ static int sky1_audss_gate_enable(struct clk_hw *hw)
 	struct clk_gate *gate = to_clk_gate(hw);
 	struct sky1_clk_gate *sky1_gate = container_of(gate, struct sky1_clk_gate, gate);
 
-	dev_info(sky1_gate->dev, "gate_enable: bit %d\n", gate->bit_idx);
+	dev_dbg(sky1_gate->dev, "gate_enable: bit %d\n", gate->bit_idx);
 	sky1_audss_gate_endisable(hw, 1);
 	return 0;
 }
