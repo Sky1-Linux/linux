@@ -759,9 +759,15 @@ static void cix_dsp_rproc_vring_poll_work(struct work_struct *work)
 	if (READ_ONCE(rproc->state) != RPROC_RUNNING)
 		return;
 
-	/* Force callbacks to check for pending messages */
-	rproc_vq_interrupt(rproc, 0);
-	rproc_vq_interrupt(rproc, 1);
+	/*
+	 * Force callbacks to check for pending messages.
+	 * We use rproc_vq_force_callback() instead of rproc_vq_interrupt()
+	 * because the DSP uses rpmsg-lite which puts TX messages in the
+	 * avail ring instead of the used ring, so vring_interrupt() won't
+	 * detect any work to do.
+	 */
+	rproc_vq_force_callback(rproc, 0);
+	rproc_vq_force_callback(rproc, 1);
 
 	/* Schedule next poll if still running */
 	if (READ_ONCE(rproc->state) == RPROC_RUNNING)

@@ -15,17 +15,22 @@
 #include <linux/idr.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
+#include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
+#include <linux/remoteproc.h>
 #include <linux/rpmsg.h>
 #include <linux/rpmsg/byteorder.h>
 #include <linux/rpmsg/ns.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
+#include <linux/spinlock.h>
 #include <linux/virtio.h>
 #include <linux/virtio_ids.h>
 #include <linux/virtio_config.h>
+#include <linux/virtio_ring.h>
 #include <linux/wait.h>
 
 #include "rpmsg_internal.h"
@@ -66,6 +71,11 @@ struct virtproc_info {
 	struct mutex endpoints_lock;
 	wait_queue_head_t sendq;
 	atomic_t sleepers;
+	/*
+	 * For rpmsg-lite compatibility: track avail ring index.
+	 * rpmsg-lite puts TX messages in the avail ring instead of used ring.
+	 */
+	u16 rvq_last_avail_idx;
 };
 
 /* The feature bitmap for virtio rpmsg */
@@ -770,6 +780,139 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 	return 0;
 }
 
+/*
+ * Check for rpmsg-lite style messages in the avail ring.
+ * rpmsg-lite puts TX messages directly in the avail ring instead of filling
+ * host-provided buffers and putting them in the used ring.
+ *
+ * This function processes messages that the remote processor has queued
+ * in the RX vring's avail ring. For each message found:
+ * 1. Map the physical address to access the message
+ * 2. Copy to a temp buffer and process
+ * 3. Don't add buffer back (DSP manages buffers)
+ *
+ * Returns number of messages processed.
+ */
+static int rpmsg_recv_from_avail(struct virtproc_info *vrp)
+{
+	const struct vring *vring = virtqueue_get_vring(vrp->rvq);
+	struct rproc_vring *rvring = vrp->rvq->priv;
+	struct rproc *rproc = rvring ? rvring->rvdev->rproc : NULL;
+	struct device *dev = &vrp->vdev->dev;
+	struct rpmsg_endpoint *ept;
+	bool little_endian = virtio_is_little_endian(vrp->vdev);
+	u16 avail_idx, last_avail, num;
+	int msgs_received = 0;
+
+	if (!vring || !vring->avail || !vring->desc || !rproc)
+		return 0;
+
+	num = vring->num;
+
+	/* Read current avail index (with memory barrier) */
+	avail_idx = virtio16_to_cpu(vrp->vdev, READ_ONCE(vring->avail->idx));
+	last_avail = vrp->rvq_last_avail_idx;
+
+	/* Process new entries in avail ring */
+	while (last_avail != avail_idx) {
+		u16 desc_idx;
+		struct vring_desc *desc;
+		struct rpmsg_hdr *msg;
+		u64 da;
+		u32 len, msg_len;
+		void *va;
+		bool is_iomem;
+
+		/* Get descriptor index from avail ring */
+		desc_idx = virtio16_to_cpu(vrp->vdev,
+				vring->avail->ring[last_avail % num]);
+		if (desc_idx >= num) {
+			dev_warn(dev, "rpmsg-lite: bad desc idx %u\n", desc_idx);
+			last_avail++;
+			continue;
+		}
+
+		desc = &vring->desc[desc_idx];
+		len = virtio32_to_cpu(vrp->vdev, desc->len);
+
+		/*
+		 * Get message pointer - desc->addr is a device address (DA).
+		 * Use rproc_da_to_va() to translate to kernel virtual address
+		 * using the remoteproc carveout mappings.
+		 */
+		da = virtio64_to_cpu(vrp->vdev, desc->addr);
+		va = rproc_da_to_va(rproc, da, len, &is_iomem);
+		if (!va) {
+			dev_warn(dev, "rpmsg-lite: da 0x%llx translation failed\n",
+				 da);
+			last_avail++;
+			continue;
+		}
+
+		/* Copy message to temp buffer for processing */
+		msg = kmalloc(len, GFP_ATOMIC);
+		if (!msg) {
+			last_avail++;
+			continue;
+		}
+
+		if (is_iomem)
+			memcpy_fromio(msg, (void __iomem *)va, len);
+		else
+			memcpy(msg, va, len);
+
+		/*
+		 * rpmsg-lite pre-populates avail ring with empty buffer
+		 * descriptors at init. Skip these - they have msg->len=0.
+		 */
+		msg_len = __rpmsg16_to_cpu(little_endian, msg->len);
+		if (msg_len == 0) {
+			kfree(msg);
+			last_avail++;
+			continue;
+		}
+
+		dev_dbg(dev, "rpmsg-lite RX: desc=%u src=0x%x dst=0x%x len=%u\n",
+			desc_idx,
+			__rpmsg32_to_cpu(little_endian, msg->src),
+			__rpmsg32_to_cpu(little_endian, msg->dst),
+			msg_len);
+
+		/* Process the message - find endpoint and deliver */
+		mutex_lock(&vrp->endpoints_lock);
+		ept = idr_find(&vrp->endpoints,
+			       __rpmsg32_to_cpu(little_endian, msg->dst));
+		if (ept)
+			kref_get(&ept->refcount);
+		mutex_unlock(&vrp->endpoints_lock);
+
+		if (ept) {
+			mutex_lock(&ept->cb_lock);
+			if (ept->cb)
+				ept->cb(ept->rpdev, msg->data, msg_len, ept->priv,
+					__rpmsg32_to_cpu(little_endian, msg->src));
+			mutex_unlock(&ept->cb_lock);
+			kref_put(&ept->refcount, __ept_release);
+			msgs_received++;
+		} else {
+			dev_warn_ratelimited(dev,
+				"rpmsg-lite: msg with no recipient (dst=0x%x)\n",
+				__rpmsg32_to_cpu(little_endian, msg->dst));
+		}
+
+		kfree(msg);
+		last_avail++;
+	}
+
+	vrp->rvq_last_avail_idx = last_avail;
+
+	if (msgs_received)
+		dev_dbg(dev, "rpmsg-lite: received %d messages from avail ring\n",
+			msgs_received);
+
+	return msgs_received;
+}
+
 /* called when an rx buffer is used, and it's time to digest a message */
 static void rpmsg_recv_done(struct virtqueue *rvq)
 {
@@ -779,13 +922,11 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 	unsigned int len, msgs_received = 0;
 	int err;
 
+	/* First try standard virtio: check used ring */
 	msg = virtqueue_get_buf(rvq, &len);
-	if (!msg) {
-		dev_err(dev, "uhm, incoming signal, but no used buffer ?\n");
-		return;
-	}
 
 	while (msg) {
+		/* Standard virtio path - add buffer back after processing */
 		err = rpmsg_recv_single(vrp, dev, msg, len);
 		if (err)
 			break;
@@ -795,11 +936,18 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 		msg = virtqueue_get_buf(rvq, &len);
 	}
 
-	dev_dbg(dev, "Received %u messages\n", msgs_received);
+	/*
+	 * If no messages in used ring, check avail ring for rpmsg-lite style.
+	 * rpmsg-lite firmware puts TX messages directly in avail ring.
+	 */
+	if (!msgs_received)
+		msgs_received = rpmsg_recv_from_avail(vrp);
 
-	/* tell the remote processor we added another available rx buffer */
-	if (msgs_received)
+	if (msgs_received) {
+		dev_dbg(dev, "Received %u messages\n", msgs_received);
+		/* tell the remote processor we added another available rx buffer */
 		virtqueue_kick(vrp->rvq);
+	}
 }
 
 /*
