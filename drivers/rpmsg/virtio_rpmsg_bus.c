@@ -159,16 +159,22 @@ static const struct rpmsg_endpoint_ops virtio_endpoint_ops = {
 
 /**
  * rpmsg_sg_init - initialize scatterlist according to cpu address location
+ * @vrp: virtproc_info with buffer addresses for PA->DMA translation
  * @sg: scatterlist to fill
  * @cpu_addr: virtual address of the buffer
  * @len: buffer length
  *
  * An internal function filling scatterlist according to virtual address
- * location (in vmalloc or in kernel).
+ * location (in vmalloc or in kernel). Also sets DMA address for remoteproc
+ * devices that require physical-to-device address translation.
  */
 static void
-rpmsg_sg_init(struct scatterlist *sg, void *cpu_addr, unsigned int len)
+rpmsg_sg_init(struct virtproc_info *vrp, struct scatterlist *sg,
+	      void *cpu_addr, unsigned int len)
 {
+	dma_addr_t da;
+	size_t offset;
+
 	if (is_vmalloc_addr(cpu_addr)) {
 		sg_init_table(sg, 1);
 		sg_set_page(sg, vmalloc_to_page(cpu_addr), len,
@@ -177,6 +183,18 @@ rpmsg_sg_init(struct scatterlist *sg, void *cpu_addr, unsigned int len)
 		WARN_ON(!virt_addr_valid(cpu_addr));
 		sg_init_one(sg, cpu_addr, len);
 	}
+
+	/*
+	 * Compute device address for remoteproc. The DMA address returned by
+	 * dma_alloc_coherent may differ from the physical address when the
+	 * remote processor sees memory at different addresses (common for DSPs).
+	 * Use VA offset from buffer base since virt_to_phys() doesn't work
+	 * correctly for DMA coherent memory.
+	 */
+	offset = cpu_addr - vrp->rbufs;
+	da = vrp->bufs_dma + offset;
+	sg_dma_address(sg) = da;
+	sg_dma_len(sg) = len;
 }
 
 /**
@@ -619,19 +637,19 @@ static int rpmsg_send_offchannel_raw(struct rpmsg_device *rpdev,
 			 msg, sizeof(*msg) + len, true);
 #endif
 
-	rpmsg_sg_init(&sg, msg, sizeof(*msg) + len);
+	rpmsg_sg_init(vrp, &sg, msg, sizeof(*msg) + len);
 
 	mutex_lock(&vrp->tx_lock);
 
-	/* add message to the remote processor's virtqueue */
-	err = virtqueue_add_outbuf(vrp->svq, &sg, 1, msg, GFP_KERNEL);
+	/* add message to the remote processor's virtqueue (use premapped for DMA) */
+	err = virtqueue_add_outbuf_premapped(vrp->svq, &sg, 1, msg, GFP_KERNEL);
 	if (err) {
 		/*
 		 * need to reclaim the buffer here, otherwise it's lost
 		 * (memory won't leak, but rpmsg won't use it again for TX).
 		 * this will wait for a buffer management overhaul.
 		 */
-		dev_err(dev, "virtqueue_add_outbuf failed: %d\n", err);
+		dev_err(dev, "virtqueue_add_outbuf_premapped failed: %d\n", err);
 		goto out;
 	}
 
@@ -740,10 +758,10 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 		dev_warn_ratelimited(dev, "msg received with no recipient\n");
 
 	/* publish the real size of the buffer */
-	rpmsg_sg_init(&sg, msg, vrp->buf_size);
+	rpmsg_sg_init(vrp, &sg, msg, vrp->buf_size);
 
-	/* add the buffer back to the remote processor's virtqueue */
-	err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, msg, GFP_KERNEL);
+	/* add the buffer back to the remote processor's virtqueue (use premapped for DMA) */
+	err = virtqueue_add_inbuf_premapped(vrp->rvq, &sg, 1, msg, NULL, GFP_KERNEL);
 	if (err < 0) {
 		dev_err(dev, "failed to add a virtqueue buffer: %d\n", err);
 		return err;
@@ -901,8 +919,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		goto vqs_del;
 	}
 
-	dev_dbg(&vdev->dev, "buffers: va %p, dma %pad\n",
-		bufs_va, &vrp->bufs_dma);
+	dev_dbg(&vdev->dev, "buffers: va %p, dma %pad\n", bufs_va, &vrp->bufs_dma);
 
 	/* half of the buffers is dedicated for RX */
 	vrp->rbufs = bufs_va;
@@ -910,15 +927,15 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	/* and half is dedicated for TX */
 	vrp->sbufs = bufs_va + total_buf_space / 2;
 
-	/* set up the receive buffers */
+	/* set up the receive buffers (use premapped for DMA address translation) */
 	for (i = 0; i < vrp->num_bufs / 2; i++) {
 		struct scatterlist sg;
 		void *cpu_addr = vrp->rbufs + i * vrp->buf_size;
 
-		rpmsg_sg_init(&sg, cpu_addr, vrp->buf_size);
+		rpmsg_sg_init(vrp, &sg, cpu_addr, vrp->buf_size);
 
-		err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, cpu_addr,
-					  GFP_KERNEL);
+		err = virtqueue_add_inbuf_premapped(vrp->rvq, &sg, 1, cpu_addr,
+						    NULL, GFP_KERNEL);
 		WARN_ON(err); /* sanity check; this can't really happen */
 	}
 

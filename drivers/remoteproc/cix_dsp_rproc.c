@@ -44,6 +44,7 @@
 #define MBOX_SEND_TIMEOUT			(100)
 #define MBOX_MSG_OFFSET				(1)
 #define MBOX_MSG_LEN				(2)
+#define VRING_POLL_INTERVAL_MS			(50)
 
 /**
  * struct cix_dsp_mem - internal memory structure
@@ -86,8 +87,8 @@ static const struct cix_mem_region sky1_dsp_mems[CIX_MEM_REG_NUM] = {
 	{ .name = "vdev0vring1", .da = 0x3de04000, .sa = 0xcde04000, .len = 0x4000 },
 	/* 1M vdev0buffer */
 	{ .name = "vdev0buffer", .da = 0x3de08000, .sa = 0xcde08000, .len = 0x100000 },
-	/* 16M dsp_reserved */
-	{ .name = "dsp_reserved", .da = 0xce000000, .sa = 0xce000000, .len = 0x1000000 },
+	/* 16M dsp_reserved - DSP sees 0x3e000000, system address is 0xce000000 */
+	{ .name = "dsp_reserved", .da = 0x3e000000, .sa = 0xce000000, .len = 0x1000000 },
 };
 
 struct cix_dsp_rproc {
@@ -106,6 +107,7 @@ struct cix_dsp_rproc {
 	struct mbox_chan *tx_ch;
 	struct mbox_chan *rx_ch;
 	struct work_struct rproc_work;
+	struct delayed_work vring_poll_work;
 	struct workqueue_struct *workqueue;
 	struct completion rsp_comp;
 	bool rproc_ready;
@@ -409,6 +411,9 @@ static int cix_dsp_rproc_stop(struct rproc *rproc)
 	u32 msg[MBOX_MSG_LEN];
 	int ret;
 
+	/* Stop vring polling workaround */
+	cancel_delayed_work_sync(&rproc_priv->vring_poll_work);
+
 	/*
 	 * If dsp wdg triggered to ap, means that dsp crashed,
 	 * no ability to ack stop message.
@@ -646,6 +651,15 @@ static void cix_dsp_rproc_rx_callback(struct mbox_client *cl, void *data)
 	switch (message[MBOX_MSG_OFFSET]) {
 	case MBOX_MSG_REPROC_READY:
 		rproc_priv->rproc_ready = true;
+		dev_info(rproc_priv->dev, "DSP ready, starting vring polling\n");
+		/*
+		 * DSP firmware uses rpmsg-lite which doesn't send mailbox kicks
+		 * when it queues messages. Start polling to check for responses.
+		 */
+		queue_work(rproc_priv->workqueue, &rproc_priv->rproc_work);
+		queue_delayed_work(rproc_priv->workqueue,
+				   &rproc_priv->vring_poll_work,
+				   msecs_to_jiffies(VRING_POLL_INTERVAL_MS));
 		break;
 	case MBOX_MSG_SUSPEND_ACK:
 	case MBOX_MSG_REPROC_STOP_ACK:
@@ -725,6 +739,35 @@ static void cix_dsp_rproc_mbox_vq_work(struct work_struct *work)
 
 unlock_mutex:
 	mutex_unlock(&rproc->lock);
+}
+
+/*
+ * Workaround for DSP firmware not sending mailbox kicks after vring operations.
+ * Poll the vrings periodically to check for pending messages.
+ */
+static void cix_dsp_rproc_vring_poll_work(struct work_struct *work)
+{
+	struct cix_dsp_rproc *rproc_priv = container_of(work, struct cix_dsp_rproc,
+							vring_poll_work.work);
+	struct rproc *rproc = rproc_priv->rproc;
+
+	/*
+	 * Check state without lock to avoid deadlock with rproc_shutdown().
+	 * rproc_shutdown() holds rproc->lock while calling our stop(),
+	 * which calls cancel_delayed_work_sync() waiting for us to finish.
+	 */
+	if (READ_ONCE(rproc->state) != RPROC_RUNNING)
+		return;
+
+	/* Force callbacks to check for pending messages */
+	rproc_vq_interrupt(rproc, 0);
+	rproc_vq_interrupt(rproc, 1);
+
+	/* Schedule next poll if still running */
+	if (READ_ONCE(rproc->state) == RPROC_RUNNING)
+		queue_delayed_work(rproc_priv->workqueue,
+				   &rproc_priv->vring_poll_work,
+				   msecs_to_jiffies(VRING_POLL_INTERVAL_MS));
 }
 
 static int cix_dsp_rproc_probe(struct platform_device *pdev)
@@ -815,6 +858,7 @@ static int cix_dsp_rproc_probe(struct platform_device *pdev)
 	}
 
 	INIT_WORK(&rproc_priv->rproc_work, cix_dsp_rproc_mbox_vq_work);
+	INIT_DELAYED_WORK(&rproc_priv->vring_poll_work, cix_dsp_rproc_vring_poll_work);
 
 	ret = cix_dsp_rproc_addr_init(rproc_priv);
 	if (ret) {
