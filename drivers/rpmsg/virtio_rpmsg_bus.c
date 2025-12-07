@@ -76,6 +76,12 @@ struct virtproc_info {
 	 * rpmsg-lite puts TX messages in the avail ring instead of used ring.
 	 */
 	u16 rvq_last_avail_idx;
+	/*
+	 * CIX DSP quirk: DSP firmware writes responses in-place into TX buffers
+	 * and uses the TX vring bidirectionally. When set, TX callbacks are
+	 * enabled and TX completions are scanned for DSP-originated messages.
+	 */
+	bool cix_dsp_quirk;
 };
 
 /* The feature bitmap for virtio rpmsg */
@@ -712,14 +718,21 @@ static ssize_t virtio_rpmsg_get_mtu(struct rpmsg_endpoint *ept)
 	return vch->vrp->buf_size - sizeof(struct rpmsg_hdr);
 }
 
-static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
-			     struct rpmsg_hdr *msg, unsigned int len)
+/*
+ * Handle an incoming rpmsg message: validate, find endpoint, and dispatch.
+ * This is factored out from rpmsg_recv_single() so it can be reused for
+ * CIX DSP quirk where messages arrive via TX buffers instead of RX buffers.
+ *
+ * Returns 0 on success, negative errno on failure.
+ * Does NOT handle buffer recycling - caller is responsible for that.
+ */
+static int rpmsg_handle_incoming_msg(struct virtproc_info *vrp,
+				     struct device *dev,
+				     struct rpmsg_hdr *msg, unsigned int len)
 {
 	struct rpmsg_endpoint *ept;
-	struct scatterlist sg;
 	bool little_endian = virtio_is_little_endian(vrp->vdev);
 	unsigned int msg_len = __rpmsg16_to_cpu(little_endian, msg->len);
-	int err;
 
 	dev_dbg(dev, "From: 0x%x, To: 0x%x, Len: %d, Flags: %d, Reserved: %d\n",
 		__rpmsg32_to_cpu(little_endian, msg->src),
@@ -764,8 +777,22 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 
 		/* farewell, ept, we don't need you anymore */
 		kref_put(&ept->refcount, __ept_release);
-	} else
+	} else {
 		dev_warn_ratelimited(dev, "msg received with no recipient\n");
+	}
+
+	return 0;
+}
+
+static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
+			     struct rpmsg_hdr *msg, unsigned int len)
+{
+	struct scatterlist sg;
+	int err;
+
+	err = rpmsg_handle_incoming_msg(vrp, dev, msg, len);
+	if (err)
+		return err;
 
 	/* publish the real size of the buffer */
 	rpmsg_sg_init(vrp, &sg, msg, vrp->buf_size);
@@ -951,6 +978,68 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 }
 
 /*
+ * CIX DSP quirk: Check TX completions for DSP-originated messages.
+ *
+ * The CIX DSP firmware writes responses in-place into TX buffers and uses
+ * the TX vring bidirectionally. This function drains TX completions and
+ * treats any that look like DSP->host messages as inbound traffic.
+ *
+ * Heuristic: A message is DSP-originated if:
+ *   - len >= sizeof(rpmsg_hdr) and msg->len > 0
+ *   - msg->src == 0 (DSP system endpoint) OR
+ *   - msg->src >= RPMSG_RESERVED_ADDRESSES (DSP dynamic endpoints)
+ *
+ * Linux endpoints use addresses in [1, RPMSG_RESERVED_ADDRESSES).
+ */
+static void rpmsg_check_tx_for_response(struct virtproc_info *vrp)
+{
+	struct virtqueue *svq = vrp->svq;
+	struct device *dev = &vrp->vdev->dev;
+	struct rpmsg_hdr *msg;
+	unsigned int len;
+	bool little_endian = virtio_is_little_endian(vrp->vdev);
+	int msgs_received = 0;
+
+	/* Drain all used TX buffers */
+	while ((msg = virtqueue_get_buf(svq, &len)) != NULL) {
+		u32 src;
+
+		if (len < sizeof(*msg)) {
+			/* Too small to be a valid message, skip */
+			continue;
+		}
+
+		src = __rpmsg32_to_cpu(little_endian, msg->src);
+
+		/*
+		 * CIX DSP quirk heuristic: DSP-originated messages have
+		 * src == 0 (system endpoint) or src >= 1024 (DSP endpoints).
+		 * Linux uses src in [1, 1024).
+		 */
+		if (msg->len &&
+		    (src == 0 || src >= RPMSG_RESERVED_ADDRESSES)) {
+			dev_dbg(dev, "CIX DSP: TX response src=%u dst=%u len=%u\n",
+				src,
+				__rpmsg32_to_cpu(little_endian, msg->dst),
+				__rpmsg16_to_cpu(little_endian, msg->len));
+
+			/* Treat as inbound message */
+			rpmsg_handle_incoming_msg(vrp, dev, msg, len);
+			msgs_received++;
+		}
+
+		/*
+		 * TX buffer recycling: The buffer came from vrp->sbufs pool.
+		 * Unlike RX path, we don't requeue it - the TX send path
+		 * manages the buffer pool via last_sbuf.
+		 */
+	}
+
+	if (msgs_received)
+		dev_dbg(dev, "CIX DSP: processed %d TX responses\n", msgs_received);
+}
+
+/*
  * This is invoked whenever the remote processor completed processing
  * a TX msg we just sent it, and the buffer is put back to the used ring.
  *
@@ -962,6 +1051,10 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
 	struct virtproc_info *vrp = svq->vdev->priv;
 
 	dev_dbg(&svq->vdev->dev, "%s\n", __func__);
+
+	/* CIX DSP quirk: check for DSP-originated messages in TX buffers */
+	if (vrp->cix_dsp_quirk)
+		rpmsg_check_tx_for_response(vrp);
 
 	/* wake up potential senders that are waiting for a tx buffer */
 	wake_up_interruptible(&vrp->sendq);
@@ -1031,6 +1124,24 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	vrp->vdev = vdev;
 
+	/* Check if this is a CIX DSP which requires TX vring quirks */
+	{
+		struct rproc *rproc = rproc_get_by_child(&vdev->dev);
+
+		if (rproc) {
+			/*
+			 * The DT node is on the platform device (rproc->dev.parent),
+			 * not on the rproc device itself.
+			 */
+			struct device_node *np = rproc->dev.parent ?
+						 rproc->dev.parent->of_node : NULL;
+
+			if (np && of_device_is_compatible(np, "cix,sky1-hifi5"))
+				vrp->cix_dsp_quirk = true;
+			rproc_put(rproc);
+		}
+	}
+
 	idr_init(&vrp->endpoints);
 	mutex_init(&vrp->endpoints_lock);
 	mutex_init(&vrp->tx_lock);
@@ -1087,8 +1198,15 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		WARN_ON(err); /* sanity check; this can't really happen */
 	}
 
-	/* suppress "tx-complete" interrupts */
-	virtqueue_disable_cb(vrp->svq);
+	/*
+	 * Suppress "tx-complete" interrupts for normal operation.
+	 * For CIX DSP quirk, keep TX callbacks enabled so we can detect
+	 * DSP-originated messages written in-place to TX buffers.
+	 */
+	if (!vrp->cix_dsp_quirk)
+		virtqueue_disable_cb(vrp->svq);
+	else
+		dev_info(&vdev->dev, "CIX DSP quirk: TX callbacks enabled\n");
 
 	vdev->priv = vrp;
 
@@ -1139,6 +1257,14 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	 */
 	if (notify)
 		virtqueue_notify(vrp->rvq);
+
+	/*
+	 * CIX DSP quirk: Process any messages the DSP may have pre-queued
+	 * in the TX vring before we came up. This catches early announcements
+	 * that were written before Linux initialized the virtio device.
+	 */
+	if (vrp->cix_dsp_quirk)
+		rpmsg_check_tx_for_response(vrp);
 
 	dev_info(&vdev->dev, "rpmsg host is online\n");
 
