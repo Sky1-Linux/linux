@@ -174,7 +174,7 @@ static int cix_mbox_send_data_fifo(struct mbox_chan *chan, void *data)
 	struct cix_mbox_priv *priv = to_cix_mbox_priv(chan->mbox);
 	int i;
 	u32 *arg = (u32 *)data;
-	u32 len, val_32;
+	u32 len, val_32, fifo_stas, int_status, int_en_b;
 
 	if (!data)
 		return -EINVAL;
@@ -188,6 +188,13 @@ static int cix_mbox_send_data_fifo(struct mbox_chan *chan, void *data)
 	val_32 = cix_mbox_read(priv, INT_ENABLE);
 	val_32 |= FIFO_EMPTY_INT;
 	cix_mbox_write(priv, val_32, INT_ENABLE);
+
+	/* Debug: check FIFO state after write */
+	fifo_stas = cix_mbox_read(priv, FIFO_STAS);
+	int_status = cix_mbox_read(priv, INT_STATUS);
+	int_en_b = cix_mbox_read(priv, INT_ENABLE_SIDE_B);
+	dev_info(priv->dev, "FIFO send: len=%u fifo_stas=0x%x int_status=0x%x int_en_b=0x%x\n",
+		 len, fifo_stas, int_status, int_en_b);
 
 	return 0;
 }

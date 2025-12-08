@@ -840,6 +840,10 @@ static int rpmsg_recv_from_avail(struct virtproc_info *vrp)
 	avail_idx = virtio16_to_cpu(vrp->vdev, READ_ONCE(vring->avail->idx));
 	last_avail = vrp->rvq_last_avail_idx;
 
+	if (avail_idx != last_avail)
+		dev_info(dev, "rpmsg_recv_from_avail: avail_idx=%u last_avail=%u num=%u\n",
+			 avail_idx, last_avail, num);
+
 	/* Process new entries in avail ring */
 	while (last_avail != avail_idx) {
 		u16 desc_idx;

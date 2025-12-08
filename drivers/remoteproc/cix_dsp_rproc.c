@@ -113,6 +113,7 @@ struct cix_dsp_rproc {
 	bool rproc_ready;
 	bool is_resume_back;
 	bool is_wdg_trigger;
+	bool pending_linkup_kick;  /* Deferred vq0 kick for rpmsg-lite link-up */
 };
 
 enum cix_dsp_mbox_messages {
@@ -370,6 +371,7 @@ static int cix_dsp_rproc_start(struct rproc *rproc)
 
 	rproc_priv->is_wdg_trigger = false;
 	rproc_priv->rproc_ready = false;
+	rproc_priv->pending_linkup_kick = false;
 
 	cix_dsp_rproc_run(rproc_priv);
 
@@ -453,11 +455,16 @@ static void cix_dsp_rproc_kick(struct rproc *rproc, int vqid)
 	msg[0] = MBOX_MSG_LEN * sizeof(u32);
 	msg[MBOX_MSG_OFFSET] = vqid;
 
+	dev_info(rproc_priv->dev, "kick: sending msg[0]=0x%x msg[1]=0x%x (vqid=%d)\n",
+		 msg[0], msg[1], vqid);
+
 	err = mbox_send_message(rproc_priv->tx_ch, (void *)msg);
 	if (err < 0) {
 		cix_dsp_mbox_dump_regs(rproc);
 		dev_err(rproc_priv->dev, "%s: failed (%d, err:%d)\n",
 			__func__, vqid, err);
+	} else {
+		dev_info(rproc_priv->dev, "kick: mbox_send_message returned %d\n", err);
 	}
 }
 
@@ -655,7 +662,17 @@ static void cix_dsp_rproc_rx_callback(struct mbox_client *cl, void *data)
 		/*
 		 * DSP firmware uses rpmsg-lite which doesn't send mailbox kicks
 		 * when it queues messages. Start polling to check for responses.
+		 *
+		 * rpmsg-lite firmware waits for link_state to become 1 before
+		 * creating endpoints and sending namespace announcements. The
+		 * link_state is set by rpmsg_lite_tx_callback() which is
+		 * registered for vq0 (swapped in remote_init). We need to kick vq0.
+		 *
+		 * We can't call cix_dsp_rproc_kick() here because we're in
+		 * mailbox IRQ context and mbox_send_message() may sleep.
+		 * Set flag to defer the kick to workqueue context.
 		 */
+		rproc_priv->pending_linkup_kick = true;
 		queue_work(rproc_priv->workqueue, &rproc_priv->rproc_work);
 		queue_delayed_work(rproc_priv->workqueue,
 				   &rproc_priv->vring_poll_work,
@@ -733,6 +750,28 @@ static void cix_dsp_rproc_mbox_vq_work(struct work_struct *work)
 
 	if (rproc->state != RPROC_RUNNING)
 		goto unlock_mutex;
+
+	/*
+	 * Send deferred vq0 kick for rpmsg-lite link-up.
+	 * This must be done in workqueue context because mbox_send_message()
+	 * may sleep (tx_block = true).
+	 *
+	 * rpmsg-lite remote_init swaps vrings vs master:
+	 *   callback[0] = tx_callback (sets link_state=1)
+	 *   callback[1] = rx_callback
+	 * So we need to kick vq0 to trigger tx_callback and set link_state.
+	 */
+	if (rproc_priv->pending_linkup_kick) {
+		rproc_priv->pending_linkup_kick = false;
+		/*
+		 * Give DSP a moment to finish rpmsg-lite init after sending
+		 * REPROC_READY. The DSP registers ISRs before sending READY,
+		 * but a small delay ensures it's fully in the wait loop.
+		 */
+		msleep(10);
+		dev_info(rproc_priv->dev, "Sending vq0 kick for rpmsg-lite link up\n");
+		cix_dsp_rproc_kick(rproc, 0);
+	}
 
 	rproc_vq_interrupt(rproc_priv->rproc, 0);
 	rproc_vq_interrupt(rproc_priv->rproc, 1);
