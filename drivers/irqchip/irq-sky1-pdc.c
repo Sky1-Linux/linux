@@ -67,10 +67,11 @@ static int sky1_pdc_domain_translate(struct irq_domain *d,
 				      unsigned int *type)
 {
 	if (is_of_node(fwspec->fwnode)) {
-		if (fwspec->param_count != 3)
+		/* Accept both 3-cell and 4-cell GIC format */
+		if (fwspec->param_count < 3 || fwspec->param_count > 4)
 			return -EINVAL;
 
-		/* No PPI should point to this domain */
+		/* No PPI should point to this domain (param[0] must be GIC_SPI=0) */
 		if (fwspec->param[0] != 0)
 			return -EINVAL;
 
@@ -144,6 +145,8 @@ static int __init sky1_pdc_irqchip_init(struct device_node *node,
 	struct pdcv1_irqchip_data *cd;
 	const struct of_device_id *id;
 
+	pr_info("sky1_pdc: init called for %pOF, parent=%pOF\n", node, parent);
+
 	if (!parent) {
 		pr_err("%pOF: no parent, giving up\n", node);
 		return -ENODEV;
@@ -176,16 +179,17 @@ static int __init sky1_pdc_irqchip_init(struct device_node *node,
 		return -ENOMEM;
 	}
 
-	domain = irq_domain_add_hierarchy(parent_domain, 0, PDC_MAX_IRQS,
-					node, &pdcv1_irqchip_data_domain_ops, cd);
+	domain = irq_domain_create_hierarchy(parent_domain, 0, PDC_MAX_IRQS,
+					of_fwnode_handle(node), &pdcv1_irqchip_data_domain_ops, cd);
 	if (!domain) {
 		iounmap(cd->pdc_base);
 		kfree(cd);
 		return -ENOMEM;
 	}
-	irq_set_default_host(domain);
+	/* Don't set as default - only devices with interrupt-parent=<&pdc> should use PDC */
 
 	cix_domain = domain;
+	pr_info("sky1_pdc: domain created successfully for %pOF\n", node);
 
 	register_syscore_ops(&sky1_pdc_syscore_ops);
 
@@ -228,7 +232,7 @@ static int __init sky1_acpi_pdc_irqchip_init(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	irq_set_default_host(domain);
+	/* Don't set as default - only devices with interrupt-parent should use PDC */
 	cix_domain = domain;
 
 	register_syscore_ops(&sky1_pdc_syscore_ops);

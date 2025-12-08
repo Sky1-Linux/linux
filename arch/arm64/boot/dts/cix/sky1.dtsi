@@ -21,7 +21,7 @@
 /memreserve/ 0x80000000 0x6000000;
 
 / {
-	interrupt-parent = <&pdc>;
+	interrupt-parent = <&gic>;
 	#address-cells = <2>;
 	#size-cells = <2>;
 
@@ -585,7 +585,7 @@
 		compatible = "cix,sky1-pdc", "syscon";
 		reg = <0x0 0x16000000 0x0 0x1000>;
 		interrupt-controller;
-		#interrupt-cells = <3>;
+		#interrupt-cells = <4>;
 		interrupt-parent = <&gic>;
 	};
 
@@ -2898,6 +2898,7 @@
 			reg = <0x0 0x15010000 0x0 0x480000>,
 			      <0x0 0x15000000 0x0 0x10000>;
 			reg-names = "gpu", "rcsu";
+			interrupt-parent = <&pdc>;
 			interrupts = <GIC_SPI 237 IRQ_TYPE_LEVEL_HIGH 0>,
 					<GIC_SPI 238 IRQ_TYPE_LEVEL_HIGH 0>,
 					<GIC_SPI 239 IRQ_TYPE_LEVEL_HIGH 0>;
