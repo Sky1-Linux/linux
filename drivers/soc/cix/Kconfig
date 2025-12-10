@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config CIX_SKY1_SOCINFO
+	tristate "CIX Sky1 SoC information driver"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on NVMEM
+	default ARCH_CIX
+	help
+	  Say yes here to enable support for the CIX Sky1 SoC information
+	  driver. This provides SoC identification, firmware version
+	  information, and board details via sysfs.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called sky1-socinfo.
