@@ -3468,6 +3468,7 @@
 		#address-cells = <2>;
 		#size-cells = <2>;
 		reg = <0x0 0x06590000 0x0 0x80>;
+		reg-io-width = <4>;
 		status = "disabled";
 	};
 
@@ -3476,12 +3477,14 @@
 		#address-cells = <2>;
 		#size-cells = <2>;
 		reg = <0x0 0x065a0000 0x0 0x80>;
+		reg-io-width = <4>;
 		status = "disabled";
 	};
 
 	ap_tfa_scmi_mem: ap2tf-shmem@1 {
 		compatible = "arm,scmi-shmem";
 		reg = <0x0 0x84380000 0x0 0x80>;
+		reg-io-width = <4>;
 		status = "disabled";
 	};
 
