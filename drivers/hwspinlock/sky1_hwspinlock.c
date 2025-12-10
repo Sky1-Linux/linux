@@ -7,6 +7,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/debugfs.h>
 #include <linux/device.h>
 #include <linux/io.h>
 #include <linux/pm_runtime.h>
@@ -23,6 +24,53 @@
 #define SKY1_HWSPINLOCK_OFFSET(x)	(0x900 + 0x4 * (x))
 
 #define SKY1_HWSPINLOCK_OWNER_ID	0x01
+
+struct sky1_hwspinlock_data {
+	void __iomem *io_base;
+	struct dentry *debugfs;
+};
+
+#ifdef CONFIG_DEBUG_FS
+
+static int sky1_hwspinlock_status_show(struct seq_file *seqf, void *unused)
+{
+	struct sky1_hwspinlock_data *priv = seqf->private;
+	int i;
+	u32 val;
+
+	seq_printf(seqf, "Sky1 Hardware Spinlock Status\n");
+	seq_printf(seqf, "Number of locks: %d\n\n", SKY1_HWSPINLOCK_NUM);
+
+	for (i = 0; i < SKY1_HWSPINLOCK_NUM; i++) {
+		val = readl(priv->io_base + SKY1_HWSPINLOCK_OFFSET(i));
+		if (val & 0xFF)
+			seq_printf(seqf, "  lock[%02d]: owner=0x%02x\n", i, val & 0xFF);
+	}
+
+	return 0;
+}
+DEFINE_SHOW_ATTRIBUTE(sky1_hwspinlock_status);
+
+static void sky1_hwspinlock_debugfs_init(struct platform_device *pdev,
+					 struct sky1_hwspinlock_data *priv)
+{
+	priv->debugfs = debugfs_create_dir("sky1_hwspinlock", NULL);
+	debugfs_create_file("status", 0444, priv->debugfs, priv,
+			    &sky1_hwspinlock_status_fops);
+}
+
+static void sky1_hwspinlock_debugfs_exit(struct sky1_hwspinlock_data *priv)
+{
+	debugfs_remove_recursive(priv->debugfs);
+}
+
+#else
+
+static void sky1_hwspinlock_debugfs_init(struct platform_device *pdev,
+					 struct sky1_hwspinlock_data *priv) { }
+static void sky1_hwspinlock_debugfs_exit(struct sky1_hwspinlock_data *priv) { }
+
+#endif
 
 static int sky1_hwspinlock_trylock(struct hwspinlock *lock)
 {
@@ -54,14 +102,18 @@ static const struct hwspinlock_ops sky1_hwspinlock_ops = {
 
 static int sky1_hwspinlock_probe(struct platform_device *pdev)
 {
+	struct sky1_hwspinlock_data *priv;
 	struct hwspinlock_device *bank;
 	struct hwspinlock *hwlock;
-	void __iomem *io_base;
 	int idx, ret;
 
-	io_base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(io_base))
-		return PTR_ERR(io_base);
+	priv = devm_kzalloc(&pdev->dev, sizeof(*priv), GFP_KERNEL);
+	if (!priv)
+		return -ENOMEM;
+
+	priv->io_base = devm_platform_ioremap_resource(pdev, 0);
+	if (IS_ERR(priv->io_base))
+		return PTR_ERR(priv->io_base);
 
 	bank = devm_kzalloc(&pdev->dev, struct_size(bank, lock, SKY1_HWSPINLOCK_NUM),
 			    GFP_KERNEL);
@@ -70,9 +122,10 @@ static int sky1_hwspinlock_probe(struct platform_device *pdev)
 
 	for (idx = 0; idx < SKY1_HWSPINLOCK_NUM; idx++) {
 		hwlock = &bank->lock[idx];
-		hwlock->priv = io_base + SKY1_HWSPINLOCK_OFFSET(idx);
+		hwlock->priv = priv->io_base + SKY1_HWSPINLOCK_OFFSET(idx);
 	}
 
+	platform_set_drvdata(pdev, priv);
 	pm_runtime_enable(&pdev->dev);
 
 	ret = devm_hwspin_lock_register(&pdev->dev, bank, &sky1_hwspinlock_ops,
@@ -82,11 +135,16 @@ static int sky1_hwspinlock_probe(struct platform_device *pdev)
 		return ret;
 	}
 
+	sky1_hwspinlock_debugfs_init(pdev, priv);
+
 	return 0;
 }
 
 static void sky1_hwspinlock_remove(struct platform_device *pdev)
 {
+	struct sky1_hwspinlock_data *priv = platform_get_drvdata(pdev);
+
+	sky1_hwspinlock_debugfs_exit(priv);
 	pm_runtime_disable(&pdev->dev);
 }
 
