@@ -4,8 +4,8 @@
 
 set -e
 
-KERNEL_IMAGE="IMAGE-6.18-rc7-mainline-cix"
-DTB_FILE="SKY1-ORION-O6-6.18-rc7-mainline-cix.DTB"
+KERNEL_IMAGE="IMAGE-6.18-mainline-cix"
+DTB_FILE="SKY1-ORION-O6-6.18-mainline-cix.DTB"
 EFI_DIR="/boot/efi"
 JOBS=$(nproc)
 
