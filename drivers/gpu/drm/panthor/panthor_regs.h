@@ -70,9 +70,6 @@
 #define GPU_PWR_OVERRIDE0				0x54
 #define GPU_PWR_OVERRIDE1				0x58
 
-#define GPU_SYSC_PBHA_OVERRIDE(n)			(0x320 + ((n) * 4))
-#define GPU_SYSC_ALLOC(n)				(0x340 + ((n) * 4))
-
 #define GPU_FEATURES					0x60
 #define   GPU_FEATURES_RAY_INTERSECTION			BIT(2)
 
@@ -96,8 +93,6 @@
 #define L2_READY					0x160
 
 #define SHADER_PWRON					0x180
-#define SHADER_PWRFEATURES				0x188
-#define   SHADER_PWRFEATURES_RTU_EN			BIT(0)
 #define TILER_PWRON					0x190
 #define L2_PWRON					0x1A0
 
@@ -114,38 +109,6 @@
 #define L2_PWRACTIVE					0x260
 
 #define GPU_REVID					0x280
-
-/* G720 (arch >= 12) Host Power Control Interface */
-#define PWR_IRQ_RAWSTAT					0x800
-#define PWR_IRQ_CLEAR					0x804
-#define PWR_IRQ_MASK					0x808
-#define PWR_IRQ_STAT					0x80C
-#define   PWR_IRQ_RESET_COMPLETED			BIT(0)
-#define PWR_STATUS					0x820
-#define   PWR_STATUS_ALLOW_L2				BIT(0)
-#define   PWR_STATUS_ALLOW_TILER			BIT(1)
-#define   PWR_STATUS_ALLOW_SHADER			BIT(8)
-#define   PWR_STATUS_DELEGATED_L2			BIT(16)
-#define   PWR_STATUS_DELEGATED_TILER			BIT(17)
-#define   PWR_STATUS_DELEGATED_SHADER			BIT(24)
-#define PWR_COMMAND					0x828
-#define   PWR_COMMAND_POWER_UP				0x10
-#define   PWR_COMMAND_POWER_DOWN			0x11
-#define   PWR_COMMAND_DELEGATE				0x20
-#define   PWR_COMMAND_RETRACT				0x21
-#define   PWR_COMMAND_RESET_HARD			0x30
-#define   PWR_COMMAND_RESET_SOFT			0x31
-#define   PWR_COMMAND_DOMAIN_SHIFT			8
-#define   PWR_COMMAND_DOMAIN_L2				(0x0 << PWR_COMMAND_DOMAIN_SHIFT)
-#define   PWR_COMMAND_DOMAIN_TILER			(0x1 << PWR_COMMAND_DOMAIN_SHIFT)
-#define   PWR_COMMAND_DOMAIN_SHADER			(0x8 << PWR_COMMAND_DOMAIN_SHIFT)
-#define PWR_CMDARG					0x830
-
-/* G720 HOST_POWER registers (replaces 0x100/0x140/0x180 registers) */
-#define HOST_POWER_SHADER_PRESENT			0xA00
-#define HOST_POWER_SHADER_READY				0xA08
-#define HOST_POWER_SHADER_PWRTRANS			0xA10
-#define HOST_POWER_SHADER_PWRACTIVE			0xA18
 
 #define GPU_COHERENCY_FEATURES				0x300
 #define GPU_COHERENCY_PROT_BIT(name)			BIT(GPU_COHERENCY_  ## name)
@@ -236,6 +199,10 @@
 #define   AS_TRANSCFG_WXN				BIT(35)
 #define   AS_TRANSCFG_XREADABLE				BIT(36)
 #define AS_FAULTEXTRA(as)				(MMU_AS(as) + 0x38)
+
+/* Sky1 PHBA (Page-Based Hardware Attribute) registers */
+#define GPU_SYSC_PBHA_OVERRIDE(n)			(0x320 + ((n) * 4))
+#define GPU_SYSC_ALLOC(n)				(0x340 + ((n) * 4))
 
 #define CSF_GPU_LATEST_FLUSH_ID				0x10000
 

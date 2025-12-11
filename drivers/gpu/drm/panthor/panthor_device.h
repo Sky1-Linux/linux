@@ -10,7 +10,6 @@
 #include <linux/io-pgtable.h>
 #include <linux/regulator/consumer.h>
 #include <linux/pm_runtime.h>
-#include <linux/reset.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
 
@@ -100,6 +99,9 @@ struct panthor_device {
 	/** @iomem: CPU mapping of the IOMEM region. */
 	void __iomem *iomem;
 
+	/** @sky1_rcsu_reg: Sky1 RCSU register mapping (optional). */
+	void __iomem *sky1_rcsu_reg;
+
 	/** @clks: GPU clocks. */
 	struct {
 		/** @core: Core clock. */
@@ -110,19 +112,10 @@ struct panthor_device {
 
 		/** @coregroup: Core group clock. This clock is optional. */
 		struct clk *coregroup;
+
+		/** @backup: Sky1 backup clocks. These clocks are optional. */
+		struct clk *backup[2];
 	} clks;
-
-	/** @rstc: Reset controller (optional, platform-specific). */
-	struct reset_control *rstc;
-
-	/** @rcsu: RCSU iomem for Sky1 Q-channel clock gating (optional). */
-	void __iomem *rcsu;
-
-	/** @pm_domain_devs: PM domain device instances for multi-PD platforms. */
-	struct device *pm_domain_devs[2];
-
-	/** @pm_domain_links: PM domain device links for multi-PD platforms. */
-	struct device_link *pm_domain_links[2];
 
 	/** @coherent: True if the CPU/GPU are memory coherent. */
 	bool coherent;

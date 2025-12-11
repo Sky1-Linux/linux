@@ -6,11 +6,11 @@
 #include <linux/bitfield.h>
 #include <linux/bitmap.h>
 #include <linux/delay.h>
+#include <linux/of.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 
@@ -47,63 +47,10 @@ struct panthor_gpu {
 	 GPU_IRQ_RESET_COMPLETED | \
 	 GPU_IRQ_CLEAN_CACHES_COMPLETED)
 
-/*
- * AMBA_ENABLE register bit fields (arch12+ / G720)
- * Bits 0-4: Coherency protocol (0=ACE_LITE, 1=ACE, 31=NONE)
- * Bit 5: Shareable cache support
- *
- * Note: For arch12+, coherency is configured via AMBA_ENABLE (0x304),
- * not by direct write. The mode value goes in bits 0-4.
- */
-#define AMBA_ENABLE_COHERENCY_MASK	0x1F
-#define AMBA_ENABLE_SHAREABLE_CACHE	BIT(5)
-
 static void panthor_gpu_coherency_set(struct panthor_device *ptdev)
 {
-	/*
-	 * Sky1/G720 (arch12+): Use AMBA_ENABLE register with read-modify-write.
-	 * The coherency protocol is in bits 0-4, not the whole register.
-	 * Vendor uses ACE_LITE (mode 0) for coherency.
-	 */
-	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali")) {
-		u32 val = gpu_read(ptdev, GPU_COHERENCY_PROTOCOL);
-
-		/* Clear coherency bits (0-4) to set ACE_LITE (mode 0) */
-		val &= ~AMBA_ENABLE_COHERENCY_MASK;
-
-		gpu_write(ptdev, GPU_COHERENCY_PROTOCOL, val);
-		return;
-	}
-
 	gpu_write(ptdev, GPU_COHERENCY_PROTOCOL,
 		ptdev->coherent ? GPU_COHERENCY_PROT_BIT(ACE_LITE) : GPU_COHERENCY_NONE);
-}
-
-/*
- * Set AMBA shareable cache support for arch12+ GPUs.
- * Enables the GPU to participate in shareable cache operations.
- * Called after coherency_set, before L2 power-on.
- */
-static void panthor_gpu_amba_set_shareable_cache(struct panthor_device *ptdev)
-{
-	u32 features, enable;
-
-	/* Only for Sky1/G720 with coherency enabled */
-	if (!of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali"))
-		return;
-
-	if (!ptdev->coherent)
-		return;
-
-	/* Check if shareable cache support is available in AMBA_FEATURES (0x300) */
-	features = gpu_read(ptdev, GPU_COHERENCY_FEATURES);
-	if (!(features & AMBA_ENABLE_SHAREABLE_CACHE))
-		return;
-
-	/* Set shareable cache support bit in AMBA_ENABLE (0x304) */
-	enable = gpu_read(ptdev, GPU_COHERENCY_PROTOCOL);
-	enable |= AMBA_ENABLE_SHAREABLE_CACHE;
-	gpu_write(ptdev, GPU_COHERENCY_PROTOCOL, enable);
 }
 
 static void panthor_gpu_irq_handler(struct panthor_device *ptdev, u32 status)
@@ -184,17 +131,6 @@ int panthor_gpu_init(struct panthor_device *ptdev)
 	if (ret)
 		return ret;
 
-	/*
-	 * G720 (arch >= 12): Issue a soft reset via PWR_COMMAND to enable
-	 * the HOST_POWER register block. Without this, the HOST_POWER
-	 * registers return 0 and shader power control doesn't work.
-	 */
-	if (GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
-		ret = panthor_gpu_soft_reset(ptdev);
-		if (ret)
-			return ret;
-	}
-
 	return 0;
 }
 
@@ -272,7 +208,7 @@ int panthor_gpu_block_power_on(struct panthor_device *ptdev,
 	gpu_write64(ptdev, pwron_reg, mask);
 
 	ret = gpu_read64_relaxed_poll_timeout(ptdev, rdy_reg, val,
-					      (mask & val) == mask,
+					      (mask & val) == val,
 					      100, timeout_us);
 	if (ret) {
 		drm_err(&ptdev->base, "timeout waiting on %s:%llx readiness",
@@ -306,11 +242,11 @@ int panthor_gpu_l2_power_on(struct panthor_device *ptdev)
 			      hweight64(ptdev->gpu_info.shader_present));
 	}
 
-	/*
-	 * CIX Sky1 needs special PHBA (Page-Based Hardware Attribute)
-	 * and system cache allocation configuration before L2 activation.
-	 */
-	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali")) {
+	/* Set the desired coherency mode before the power up of L2 */
+	panthor_gpu_coherency_set(ptdev);
+
+	/* CIX Sky1 needs special PHBA setup before L2 activation */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall")) {
 		gpu_write(ptdev, GPU_SYSC_PBHA_OVERRIDE(3), 0x22000000);
 		gpu_write(ptdev, GPU_SYSC_ALLOC(0), 0x00230000);
 		gpu_write(ptdev, GPU_SYSC_ALLOC(1), 0x00000023);
@@ -321,26 +257,13 @@ int panthor_gpu_l2_power_on(struct panthor_device *ptdev)
 		gpu_write(ptdev, GPU_SYSC_ALLOC(6), 0x00000022);
 		gpu_write(ptdev, GPU_SYSC_ALLOC(7), 0x00000032);
 
-		/* Required to get LS_MEM_* related counters working */
+		/* Required for LS_MEM_* related counters */
 		gpu_write(ptdev, 0x306C, 0xFFFFFFFF);
 		gpu_write(ptdev, 0x3070, 0xFFFFFFFF);
 		gpu_write(ptdev, 0x307C, 0xFFFFFFFF);
 		gpu_write(ptdev, 0x3074, 0xFFFFFFFF);
 		gpu_write(ptdev, 0x3068, 0x1);
-
-		/* Sky1 requires PWR_OVERRIDE1 for power transition latency */
-		gpu_write(ptdev, GPU_PWR_KEY, GPU_PWR_KEY_UNLOCK);
-		gpu_write(ptdev, GPU_PWR_OVERRIDE1, 0xFFFFFF);
-
-		/* Enable Ray Tracing Unit subdomain for shader cores */
-		gpu_write(ptdev, SHADER_PWRFEATURES, SHADER_PWRFEATURES_RTU_EN);
 	}
-
-	/* Set the desired coherency mode before the power up of L2 */
-	panthor_gpu_coherency_set(ptdev);
-
-	/* Enable shareable cache support if available (arch12+) */
-	panthor_gpu_amba_set_shareable_cache(ptdev);
 
 	return panthor_gpu_power_on(ptdev, L2, 1, 20000);
 }
@@ -407,13 +330,6 @@ int panthor_gpu_soft_reset(struct panthor_device *ptdev)
 			 ptdev->gpu->pending_reqs & GPU_IRQ_RESET_COMPLETED)) {
 		ptdev->gpu->pending_reqs |= GPU_IRQ_RESET_COMPLETED;
 		gpu_write(ptdev, GPU_INT_CLEAR, GPU_IRQ_RESET_COMPLETED);
-
-		/* Sky1 requires PWR_OVERRIDE1 before soft reset */
-		if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali")) {
-			gpu_write(ptdev, GPU_PWR_KEY, GPU_PWR_KEY_UNLOCK);
-			gpu_write(ptdev, GPU_PWR_OVERRIDE1, 0xFFFFFF);
-		}
-
 		gpu_write(ptdev, GPU_CMD, GPU_SOFT_RESET);
 	}
 	spin_unlock_irqrestore(&ptdev->gpu->reqs_lock, flags);

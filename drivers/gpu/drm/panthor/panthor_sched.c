@@ -1140,17 +1140,11 @@ csg_slot_sync_priority_locked(struct panthor_device *ptdev, u32 csg_id)
 {
 	struct panthor_csg_slot *csg_slot = &ptdev->scheduler->csg_slots[csg_id];
 	struct panthor_fw_csg_iface *csg_iface;
-	u32 ep_req;
 
 	lockdep_assert_held(&ptdev->scheduler->lock);
 
 	csg_iface = panthor_fw_get_csg_iface(ptdev, csg_id);
-	/* G720+ stores endpoint_req at offset 0x38 (endpoint_req_hi), not 0x34 */
-	if (GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12)
-		ep_req = csg_iface->input->endpoint_req_hi;
-	else
-		ep_req = csg_iface->input->endpoint_req;
-	csg_slot->priority = (ep_req & CSG_EP_REQ_PRIORITY_MASK) >> 28;
+	csg_slot->priority = (csg_iface->input->endpoint_req & CSG_EP_REQ_PRIORITY_MASK) >> 28;
 }
 
 /**
@@ -1336,25 +1330,10 @@ csg_slot_prog_locked(struct panthor_device *ptdev, u32 csg_id, u32 priority)
 	csg_iface->input->allow_compute = group->compute_core_mask;
 	csg_iface->input->allow_fragment = group->fragment_core_mask;
 	csg_iface->input->allow_other = group->tiler_core_mask;
-
-	/*
-	 * G720+ (arch >= 12) uses 64-bit endpoint_req at different offset (0x38).
-	 * Write full 64-bit config including neural/comp_pri fields.
-	 * Older GPUs use 32-bit endpoint_req at 0x34.
-	 */
-	if (GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12) {
-		u64 ep_cfg = CSG_EP_REQ_COMPUTE(group->max_compute_cores) |
-			     CSG_EP_REQ_FRAGMENT(group->max_fragment_cores) |
-			     CSG_EP_REQ_TILER(group->max_tiler_cores) |
-			     CSG_EP_REQ_PRIORITY(priority);
-		/* For G720, write 64-bit value at offset 0x38 (endpoint_req_hi) */
-		*((u64 *)&csg_iface->input->endpoint_req_hi) = ep_cfg;
-	} else {
-		csg_iface->input->endpoint_req = CSG_EP_REQ_COMPUTE(group->max_compute_cores) |
-						 CSG_EP_REQ_FRAGMENT(group->max_fragment_cores) |
-						 CSG_EP_REQ_TILER(group->max_tiler_cores) |
-						 CSG_EP_REQ_PRIORITY(priority);
-	}
+	csg_iface->input->endpoint_req = CSG_EP_REQ_COMPUTE(group->max_compute_cores) |
+					 CSG_EP_REQ_FRAGMENT(group->max_fragment_cores) |
+					 CSG_EP_REQ_TILER(group->max_tiler_cores) |
+					 CSG_EP_REQ_PRIORITY(priority);
 	csg_iface->input->config = panthor_vm_as(group->vm);
 
 	if (group->suspend_buf)
@@ -1776,14 +1755,6 @@ static void sched_process_global_irq_locked(struct panthor_device *ptdev)
 	ack = READ_ONCE(glb_iface->output->ack);
 	evts = (req ^ ack) & GLB_EVT_MASK;
 
-	if (evts & GLB_FATAL) {
-		drm_err(&ptdev->base,
-			"GPU firmware fatal error: req=0x%08x ack=0x%08x",
-			req, ack);
-		/* Acknowledge the fatal event */
-		panthor_fw_update_reqs(glb_iface, req, ack, GLB_FATAL);
-	}
-
 	if (evts & GLB_IDLE)
 		sched_process_idle_event_locked(ptdev);
 }
@@ -1900,8 +1871,7 @@ static int csgs_upd_ctx_apply_locked(struct panthor_device *ptdev,
 		update_slots &= ~BIT(csg_id);
 		csg_iface = panthor_fw_get_csg_iface(ptdev, csg_id);
 
-		/* G720 firmware may need longer to acknowledge CSG requests */
-		ret = panthor_fw_csg_wait_acks(ptdev, csg_id, req_mask, &acked, 4000);
+		ret = panthor_fw_csg_wait_acks(ptdev, csg_id, req_mask, &acked, 100);
 
 		if (acked & CSG_ENDPOINT_CONFIG)
 			csg_slot_sync_priority_locked(ptdev, csg_id);
@@ -1916,13 +1886,7 @@ static int csgs_upd_ctx_apply_locked(struct panthor_device *ptdev,
 
 		if (ret && acked != req_mask &&
 		    ((csg_iface->input->req ^ csg_iface->output->ack) & req_mask) != 0) {
-			u32 req = csg_iface->input->req;
-			u32 ack = csg_iface->output->ack;
-			u32 pending = (req ^ ack) & req_mask;
-
-			drm_err(&ptdev->base,
-				"CSG %d timeout: req=0x%08x ack=0x%08x mask=0x%08x acked=0x%08x pending=0x%08x",
-				csg_id, req, ack, req_mask, acked, pending);
+			drm_err(&ptdev->base, "CSG %d update request timedout", csg_id);
 			ctx->timedout_mask |= BIT(csg_id);
 		}
 	}
@@ -2267,15 +2231,9 @@ tick_ctx_apply(struct panthor_scheduler *sched, struct panthor_sched_tick_ctx *c
 				continue;
 			}
 
-			/* G720+ uses endpoint_req at offset 0x38, not 0x34 */
-			if (GPU_ARCH_MAJOR(ptdev->gpu_info.gpu_id) >= 12)
-				panthor_fw_update_reqs(csg_iface, endpoint_req_hi,
-						       CSG_EP_REQ_PRIORITY(new_csg_prio),
-						       CSG_EP_REQ_PRIORITY_MASK);
-			else
-				panthor_fw_update_reqs(csg_iface, endpoint_req,
-						       CSG_EP_REQ_PRIORITY(new_csg_prio),
-						       CSG_EP_REQ_PRIORITY_MASK);
+			panthor_fw_update_reqs(csg_iface, endpoint_req,
+					       CSG_EP_REQ_PRIORITY(new_csg_prio),
+					       CSG_EP_REQ_PRIORITY_MASK);
 			csgs_upd_ctx_queue_reqs(ptdev, &upd_ctx, csg_id,
 						csg_iface->output->ack ^ CSG_ENDPOINT_CONFIG,
 						CSG_ENDPOINT_CONFIG);
@@ -3290,33 +3248,6 @@ queue_timedout_job(struct drm_sched_job *sched_job)
 
 	drm_warn(&ptdev->base, "job timeout: pid=%d, comm=%s, seqno=%llu\n",
 		 group->task_info.pid, group->task_info.comm, job->done_fence->seqno);
-
-	/* Debug: dump CS and ringbuffer state at timeout */
-	if (group->csg_id >= 0) {
-		struct panthor_fw_cs_iface *cs_iface =
-			panthor_fw_get_cs_iface(ptdev, group->csg_id, job->queue_idx);
-		drm_warn(&ptdev->base,
-			 "  CS[%d]: req=0x%08x ack=0x%08x cmd_ptr=0x%llx status_wait=0x%08x\n",
-			 job->queue_idx,
-			 cs_iface->input->req, cs_iface->output->ack,
-			 cs_iface->output->status_cmd_ptr, cs_iface->output->status_wait);
-		drm_warn(&ptdev->base,
-			 "  ringbuf: insert=%llu in_extract=%llu out_extract=%llu active=%u\n",
-			 queue->iface.input->insert, queue->iface.input->extract,
-			 queue->iface.output->extract, queue->iface.output->active);
-		drm_warn(&ptdev->base,
-			 "  job: ringbuf_start=%u ringbuf_end=%u\n",
-			 job->ringbuf.start, job->ringbuf.end);
-		/* Dump GPU power/fault state */
-		drm_warn(&ptdev->base,
-			 "  GPU: status=0x%08x fault=0x%08x shader_ready=0x%llx shader_pwractive=0x%llx\n",
-			 gpu_read(ptdev, GPU_STATUS),
-			 gpu_read(ptdev, GPU_FAULT_STATUS),
-			 gpu_read64(ptdev, SHADER_READY),
-			 gpu_read64(ptdev, SHADER_PWRACTIVE));
-	} else {
-		drm_warn(&ptdev->base, "  group not scheduled (csg_id=%d)\n", group->csg_id);
-	}
 
 	drm_WARN_ON(&ptdev->base, atomic_read(&sched->reset.in_progress));
 

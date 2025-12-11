@@ -979,10 +979,10 @@ static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 {
 	struct panthor_fw_global_iface *glb_iface = panthor_fw_get_glb_iface(ptdev);
 
-	/* Tell MCU which cores are available */
+	/* Enable all cores. */
 	glb_iface->input->core_en_mask = ptdev->gpu_info.shader_present;
 
-	/* Setup timers */
+	/* Setup timers. */
 	glb_iface->input->poweroff_timer = panthor_fw_conv_timeout(ptdev, PWROFF_HYSTERESIS_US);
 	glb_iface->input->progress_timer = PROGRESS_TIMEOUT_CYCLES >> PROGRESS_TIMEOUT_SCALE_SHIFT;
 	glb_iface->input->idle_timer = panthor_fw_conv_timeout(ptdev, IDLE_HYSTERESIS_US);
@@ -1001,7 +1001,6 @@ static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 			       GLB_CFG_POWEROFF_TIMER |
 			       GLB_CFG_PROGRESS_TIMER);
 
-	/* Ring doorbell to notify MCU of configuration update */
 	gpu_write(ptdev, CSF_DOORBELL(CSF_GLB_DOORBELL_ID), 1);
 
 	/* Kick the watchdog. */
@@ -1012,14 +1011,6 @@ static void panthor_fw_init_global_iface(struct panthor_device *ptdev)
 static void panthor_job_irq_handler(struct panthor_device *ptdev, u32 status)
 {
 	gpu_write(ptdev, JOB_INT_CLEAR, status);
-
-	/*
-	 * Ensure IRQ clear write completes before reading FW interface memory.
-	 * MCU and CPU share Outer Shareable domain - without this barrier,
-	 * subsequent reads of CSG_ACK may return stale data, causing false
-	 * timeout detection even when firmware has responded.
-	 */
-	dmb(osh);
 
 	if (!ptdev->fw->booted && (status & JOB_INT_GLOBAL_IF))
 		ptdev->fw->booted = true;
