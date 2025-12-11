@@ -50,11 +50,19 @@ static int panthor_clk_init(struct panthor_device *ptdev)
 				     PTR_ERR(ptdev->clks.core),
 				     "get 'core' clock failed");
 
-	ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "stacks");
+	/* Try vendor name first (gpu_clk_stacks), then mainline name (stacks) */
+	ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_stacks");
 	if (IS_ERR(ptdev->clks.stacks))
 		return dev_err_probe(ptdev->base.dev,
 				     PTR_ERR(ptdev->clks.stacks),
-				     "get 'stacks' clock failed");
+				     "get 'gpu_clk_stacks' clock failed");
+	if (!ptdev->clks.stacks) {
+		ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "stacks");
+		if (IS_ERR(ptdev->clks.stacks))
+			return dev_err_probe(ptdev->base.dev,
+					     PTR_ERR(ptdev->clks.stacks),
+					     "get 'stacks' clock failed");
+	}
 
 	ptdev->clks.coregroup = devm_clk_get_optional(ptdev->base.dev, "coregroup");
 	if (IS_ERR(ptdev->clks.coregroup))
@@ -78,6 +86,82 @@ static int panthor_clk_init(struct panthor_device *ptdev)
 	}
 
 	drm_info(&ptdev->base, "clock rate = %lu\n", clk_get_rate(ptdev->clks.core));
+	return 0;
+}
+
+static void panthor_pm_domain_fini(struct panthor_device *ptdev)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(ptdev->pm_domain_devs); i++) {
+		if (!ptdev->pm_domain_devs[i])
+			break;
+
+		if (ptdev->pm_domain_links[i])
+			device_link_del(ptdev->pm_domain_links[i]);
+
+		dev_pm_domain_detach(ptdev->pm_domain_devs[i], true);
+	}
+}
+
+static int panthor_pm_domain_init(struct panthor_device *ptdev)
+{
+	int err;
+	int i, num_domains;
+
+	num_domains = of_count_phandle_with_args(ptdev->base.dev->of_node,
+						 "power-domains",
+						 "#power-domain-cells");
+
+	/*
+	 * Single domain is handled by the core, and, if only a single power
+	 * the power domain is requested, the property is optional.
+	 */
+	if (num_domains < 2)
+		return 0;
+
+	if (WARN(num_domains > ARRAY_SIZE(ptdev->pm_domain_devs),
+			"Too many supplies in compatible structure.\n"))
+		return -EINVAL;
+
+	for (i = 0; i < num_domains; i++) {
+		ptdev->pm_domain_devs[i] =
+			dev_pm_domain_attach_by_id(ptdev->base.dev, i);
+		if (IS_ERR_OR_NULL(ptdev->pm_domain_devs[i])) {
+			err = PTR_ERR(ptdev->pm_domain_devs[i]) ? : -ENODATA;
+			ptdev->pm_domain_devs[i] = NULL;
+			dev_err(ptdev->base.dev,
+				"failed to get pm-domain %d: %d\n",
+				i, err);
+			goto err;
+		}
+
+		ptdev->pm_domain_links[i] = device_link_add(ptdev->base.dev,
+				ptdev->pm_domain_devs[i], DL_FLAG_PM_RUNTIME |
+				DL_FLAG_STATELESS | DL_FLAG_RPM_ACTIVE);
+		if (!ptdev->pm_domain_links[i]) {
+			dev_err(ptdev->pm_domain_devs[i],
+				"adding device link failed!\n");
+			err = -ENODEV;
+			goto err;
+		}
+	}
+
+	return 0;
+
+err:
+	panthor_pm_domain_fini(ptdev);
+	return err;
+}
+
+static int panthor_resets_init(struct panthor_device *ptdev)
+{
+	ptdev->gpu_reset = devm_reset_control_get(ptdev->base.dev, "gpu_reset");
+	if (IS_ERR(ptdev->gpu_reset)) {
+		dev_err(ptdev->base.dev, "failed to get gpu_reset\n");
+		return PTR_ERR(ptdev->gpu_reset);
+	}
+
 	return 0;
 }
 
@@ -239,41 +323,55 @@ int panthor_device_init(struct panthor_device *ptdev)
 	if (ret)
 		return ret;
 
+	ret = panthor_pm_domain_init(ptdev);
+	if (ret)
+		return ret;
+
+	ret = panthor_resets_init(ptdev);
+	if (ret)
+		goto err_release_pm_domains;
+
 	/* Sky1 uses resource 0 for RCSU, resource 1 for GPU registers.
 	 * Other platforms use resource 0 for GPU registers.
 	 */
 	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall")) {
 		ptdev->iomem = devm_platform_get_and_ioremap_resource(
 				to_platform_device(ptdev->base.dev), 1, &res);
-		if (IS_ERR(ptdev->iomem))
-			return PTR_ERR(ptdev->iomem);
+		if (IS_ERR(ptdev->iomem)) {
+			ret = PTR_ERR(ptdev->iomem);
+			goto err_release_pm_domains;
+		}
 
 		ptdev->sky1_rcsu_reg = devm_platform_ioremap_resource(
 				to_platform_device(ptdev->base.dev), 0);
-		if (IS_ERR(ptdev->sky1_rcsu_reg))
-			return PTR_ERR(ptdev->sky1_rcsu_reg);
+		if (IS_ERR(ptdev->sky1_rcsu_reg)) {
+			ret = PTR_ERR(ptdev->sky1_rcsu_reg);
+			goto err_release_pm_domains;
+		}
 	} else {
 		ptdev->iomem = devm_platform_get_and_ioremap_resource(
 				to_platform_device(ptdev->base.dev), 0, &res);
-		if (IS_ERR(ptdev->iomem))
-			return PTR_ERR(ptdev->iomem);
+		if (IS_ERR(ptdev->iomem)) {
+			ret = PTR_ERR(ptdev->iomem);
+			goto err_release_pm_domains;
+		}
 	}
 
 	ptdev->phys_addr = res->start;
 
 	ret = devm_pm_runtime_enable(ptdev->base.dev);
 	if (ret)
-		return ret;
+		goto err_release_pm_domains;
 
 	ret = pm_runtime_resume_and_get(ptdev->base.dev);
 	if (ret)
-		return ret;
+		goto err_release_pm_domains;
 
 	/* If PM is disabled, we need to call panthor_device_resume() manually. */
 	if (!IS_ENABLED(CONFIG_PM)) {
 		ret = panthor_device_resume(ptdev->base.dev);
 		if (ret)
-			return ret;
+			goto err_release_pm_domains;
 	}
 
 	ret = panthor_hw_init(ptdev);
@@ -326,6 +424,9 @@ err_unplug_gpu:
 
 err_rpm_put:
 	pm_runtime_put_sync_suspend(ptdev->base.dev);
+
+err_release_pm_domains:
+	panthor_pm_domain_fini(ptdev);
 	return ret;
 }
 

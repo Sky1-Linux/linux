@@ -102,6 +102,15 @@ struct panthor_device {
 	/** @sky1_rcsu_reg: Sky1 RCSU register mapping (optional). */
 	void __iomem *sky1_rcsu_reg;
 
+	/** @pm_domain_devs: PM domain device instances for devices with more than one PM domain. */
+	struct device *pm_domain_devs[2];
+
+	/** @pm_domain_links: PM domain device links for devices with more than one PM domain. */
+	struct device_link *pm_domain_links[2];
+
+	/** @gpu_reset: Reset control for GPU. */
+	struct reset_control *gpu_reset;
+
 	/** @clks: GPU clocks. */
 	struct {
 		/** @core: Core clock. */

@@ -25,9 +25,9 @@
 
 DEFINE_DRM_GEM_DMA_FOPS(linlondp_cma_fops);
 
-static bool enable_render = true;
+static bool enable_render = false;
 module_param(enable_render, bool, 0644);
-MODULE_PARM_DESC(enable_render, "Enable render node support (true/false)");
+MODULE_PARM_DESC(enable_render, "Enable render node support (default: false, conflicts with Panthor)");
 
 static int linlondp_gem_dma_dumb_create(struct drm_file *file,
 					struct drm_device *dev,
