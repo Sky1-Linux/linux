@@ -2797,9 +2797,13 @@ int panthor_mmu_init(struct panthor_device *ptdev)
 
 	ptdev->mmu = mmu;
 
-	irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "mmu");
-	if (irq <= 0)
-		return -ENODEV;
+	irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "MMU");
+	if (irq <= 0) {
+		/* Try lowercase for non-Sky1 platforms */
+		irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "mmu");
+		if (irq <= 0)
+			return -ENODEV;
+	}
 
 	ret = panthor_request_mmu_irq(ptdev, &mmu->irq, irq,
 				      panthor_mmu_fault_mask(ptdev, ~0));
