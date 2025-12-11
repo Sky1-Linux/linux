@@ -20,7 +20,6 @@
 #include <linux/io-pgtable.h>
 #include <linux/iommu.h>
 #include <linux/kmemleak.h>
-#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/rwsem.h>
@@ -600,39 +599,8 @@ static int mmu_hw_do_operation_locked(struct panthor_device *ptdev, int as_nr,
 	 * power it up
 	 */
 
-	if (op != AS_COMMAND_UNLOCK)
-		lock_region(ptdev, as_nr, iova, size);
+	lock_region(ptdev, as_nr, iova, size);
 
-	/*
-	 * Sky1 workaround: Use direct AS_COMMAND writes instead of
-	 * GPU_CONTROL.FLUSH_CACHES. Despite G720 documentation saying
-	 * FLUSH_MEM/FLUSH_PT are deprecated, Sky1 requires the old method.
-	 */
-	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali")) {
-		write_cmd(ptdev, as_nr, op);
-		ret = wait_ready(ptdev, as_nr);
-		if (ret)
-			return ret;
-
-		/*
-		 * G720 HW issue: After MMU flush, wait for L2 power transition
-		 * to complete. Without this, MMU operations can race with L2
-		 * power state changes, causing GPU lockup.
-		 */
-		if (op == AS_COMMAND_FLUSH_MEM) {
-			u64 val;
-
-			ret = gpu_read64_relaxed_poll_timeout(ptdev, L2_PWRTRANS,
-							     val, val == 0,
-							     100, 2000000);
-			if (ret)
-				drm_warn(&ptdev->base,
-					 "L2_PWRTRANS timeout: 0x%llx", val);
-		}
-		return ret;
-	}
-
-	/* Standard G720 path: GPU_CONTROL.FLUSH_CACHES + UNLOCK */
 	ret = wait_ready(ptdev, as_nr);
 	if (ret)
 		return ret;

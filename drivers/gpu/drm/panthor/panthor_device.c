@@ -4,7 +4,6 @@
 /* Copyright 2023 Collabora ltd. */
 
 #include <linux/clk.h>
-#include <linux/delay.h>
 #include <linux/mm.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -28,15 +27,6 @@
 static int panthor_gpu_coherency_init(struct panthor_device *ptdev)
 {
 	ptdev->coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
-
-	/*
-	 * Sky1 workaround: Force coherent mode regardless of DTS setting.
-	 * The vendor kernel unconditionally uses SH_CPU_INNER shareable mode
-	 * for memory attributes. Without this, GPU jobs timeout because the
-	 * memory coherency protocol doesn't match hardware expectations.
-	 */
-	if (of_device_is_compatible(ptdev->base.dev->of_node, "cix,sky1-mali"))
-		ptdev->coherent = true;
 
 	if (!ptdev->coherent)
 		return 0;
@@ -72,136 +62,23 @@ static int panthor_clk_init(struct panthor_device *ptdev)
 				     PTR_ERR(ptdev->clks.coregroup),
 				     "get 'coregroup' clock failed");
 
+	/* CIX Sky1 needs additional backup clocks */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall")) {
+		ptdev->clks.backup[0] = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_200M");
+		if (IS_ERR(ptdev->clks.backup[0]))
+			return dev_err_probe(ptdev->base.dev,
+					     PTR_ERR(ptdev->clks.backup[0]),
+					     "get 'gpu_clk_200M' clock failed");
+
+		ptdev->clks.backup[1] = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_400M");
+		if (IS_ERR(ptdev->clks.backup[1]))
+			return dev_err_probe(ptdev->base.dev,
+					     PTR_ERR(ptdev->clks.backup[1]),
+					     "get 'gpu_clk_400M' clock failed");
+	}
+
 	drm_info(&ptdev->base, "clock rate = %lu\n", clk_get_rate(ptdev->clks.core));
 	return 0;
-}
-
-static void panthor_pm_domain_fini(struct panthor_device *ptdev)
-{
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(ptdev->pm_domain_devs); i++) {
-		if (!ptdev->pm_domain_devs[i])
-			continue;
-
-		if (ptdev->pm_domain_links[i])
-			device_link_del(ptdev->pm_domain_links[i]);
-
-		dev_pm_domain_detach(ptdev->pm_domain_devs[i], true);
-	}
-}
-
-static int panthor_pm_domain_init(struct panthor_device *ptdev)
-{
-	int err;
-	int i, num_domains;
-
-	num_domains = of_count_phandle_with_args(ptdev->base.dev->of_node,
-						 "power-domains",
-						 "#power-domain-cells");
-
-	/* Single domain is handled by the core. */
-	if (num_domains < 2)
-		return 0;
-
-	if (num_domains > ARRAY_SIZE(ptdev->pm_domain_devs)) {
-		drm_warn(&ptdev->base, "Too many power domains (%d), using first %zu\n",
-			 num_domains, ARRAY_SIZE(ptdev->pm_domain_devs));
-		num_domains = ARRAY_SIZE(ptdev->pm_domain_devs);
-	}
-
-	for (i = 0; i < num_domains; i++) {
-		ptdev->pm_domain_devs[i] =
-			dev_pm_domain_attach_by_id(ptdev->base.dev, i);
-		if (IS_ERR_OR_NULL(ptdev->pm_domain_devs[i])) {
-			err = PTR_ERR(ptdev->pm_domain_devs[i]) ? : -ENODATA;
-			ptdev->pm_domain_devs[i] = NULL;
-			drm_err(&ptdev->base, "failed to get pm-domain %d: %d\n",
-				i, err);
-			goto err;
-		}
-
-		ptdev->pm_domain_links[i] = device_link_add(ptdev->base.dev,
-				ptdev->pm_domain_devs[i], DL_FLAG_PM_RUNTIME |
-				DL_FLAG_STATELESS | DL_FLAG_RPM_ACTIVE);
-		if (!ptdev->pm_domain_links[i]) {
-			drm_err(&ptdev->base, "adding pm-domain %d link failed\n", i);
-			err = -ENODEV;
-			goto err;
-		}
-	}
-
-	drm_info(&ptdev->base, "attached %d power domains\n", num_domains);
-	return 0;
-
-err:
-	panthor_pm_domain_fini(ptdev);
-	return err;
-}
-
-/* Sky1 RCSU register offset for Q-channel clock gating control */
-#define SKY1_RCSU_PGCTRL_OFFSET		0x218
-#define SKY1_RCSU_QCHANNEL_CLK_GATE_EN	BIT(0)
-
-static int panthor_reset_init(struct panthor_device *ptdev)
-{
-	struct platform_device *pdev = to_platform_device(ptdev->base.dev);
-	struct resource *res;
-
-	/*
-	 * Get only the "gpu_reset" by name, NOT the array of all resets.
-	 * Sky1 has two resets: gpu_rcsu_reset and gpu_reset.
-	 * The vendor driver only uses gpu_reset - asserting gpu_rcsu_reset
-	 * appears to disable the HOST_POWER register interface.
-	 */
-	ptdev->rstc = devm_reset_control_get_optional_exclusive(ptdev->base.dev, "gpu_reset");
-	if (IS_ERR(ptdev->rstc)) {
-		drm_err(&ptdev->base, "get reset failed %ld\n", PTR_ERR(ptdev->rstc));
-		return PTR_ERR(ptdev->rstc);
-	}
-
-	/* Try to get the RCSU region for Sky1 Q-channel clock gating.
-	 * This is optional - only Sky1 platform needs it.
-	 */
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "rcsu");
-	if (res) {
-		ptdev->rcsu = devm_ioremap_resource(ptdev->base.dev, res);
-		if (IS_ERR(ptdev->rcsu)) {
-			drm_warn(&ptdev->base, "Failed to map RCSU region\n");
-			ptdev->rcsu = NULL;
-		}
-	}
-
-	/* Don't deassert reset here - let panthor_platform_reset() do it
-	 * during resume when clocks are enabled.
-	 */
-	return 0;
-}
-
-/* Execute GPU reset sequence for Sky1.
- * Sky1 GPU power-on sequence: Power domain on -> clock enable -> IP Reset
- */
-static void panthor_platform_reset(struct panthor_device *ptdev)
-{
-	if (!ptdev->rstc)
-		return;
-
-	/* Assert then deassert reset */
-	reset_control_assert(ptdev->rstc);
-	usleep_range(10, 20);
-	reset_control_deassert(ptdev->rstc);
-
-	/*
-	 * Sky1 Q-channel clock gating: Enable after reset.
-	 * Vendor enables this in pm_callback_power_on() after execute_gpu_reset().
-	 * The Q-channel allows GPU to request clock gating from the RCSU.
-	 */
-	if (ptdev->rcsu) {
-		u32 val = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
-
-		writel(val | SKY1_RCSU_QCHANNEL_CLK_GATE_EN,
-		       ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
-	}
 }
 
 void panthor_device_unplug(struct panthor_device *ptdev)
@@ -248,9 +125,6 @@ void panthor_device_unplug(struct panthor_device *ptdev)
 	/* If PM is disabled, we need to call the suspend handler manually. */
 	if (!IS_ENABLED(CONFIG_PM))
 		panthor_device_suspend(ptdev->base.dev);
-
-	/* Clean up PM domains if we attached to multiple. */
-	panthor_pm_domain_fini(ptdev);
 
 	/* Report the unplug operation as done to unblock concurrent
 	 * panthor_device_unplug() callers.
@@ -361,22 +235,29 @@ int panthor_device_init(struct panthor_device *ptdev)
 	if (ret)
 		return ret;
 
-	ret = panthor_pm_domain_init(ptdev);
-	if (ret)
-		return ret;
-
-	ret = panthor_reset_init(ptdev);
-	if (ret)
-		goto err_pm_domain_fini;
-
 	ret = panthor_devfreq_init(ptdev);
 	if (ret)
 		return ret;
 
-	ptdev->iomem = devm_platform_get_and_ioremap_resource(to_platform_device(ptdev->base.dev),
-							      0, &res);
-	if (IS_ERR(ptdev->iomem))
-		return PTR_ERR(ptdev->iomem);
+	/* Sky1 uses resource 0 for RCSU, resource 1 for GPU registers.
+	 * Other platforms use resource 0 for GPU registers.
+	 */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall")) {
+		ptdev->iomem = devm_platform_get_and_ioremap_resource(
+				to_platform_device(ptdev->base.dev), 1, &res);
+		if (IS_ERR(ptdev->iomem))
+			return PTR_ERR(ptdev->iomem);
+
+		ptdev->sky1_rcsu_reg = devm_platform_ioremap_resource(
+				to_platform_device(ptdev->base.dev), 0);
+		if (IS_ERR(ptdev->sky1_rcsu_reg))
+			return PTR_ERR(ptdev->sky1_rcsu_reg);
+	} else {
+		ptdev->iomem = devm_platform_get_and_ioremap_resource(
+				to_platform_device(ptdev->base.dev), 0, &res);
+		if (IS_ERR(ptdev->iomem))
+			return PTR_ERR(ptdev->iomem);
+	}
 
 	ptdev->phys_addr = res->start;
 
@@ -445,9 +326,6 @@ err_unplug_gpu:
 
 err_rpm_put:
 	pm_runtime_put_sync_suspend(ptdev->base.dev);
-
-err_pm_domain_fini:
-	panthor_pm_domain_fini(ptdev);
 	return ret;
 }
 
@@ -633,18 +511,6 @@ int panthor_device_resume(struct device *dev)
 	if (ret)
 		goto err_disable_stacks_clk;
 
-	/* Execute platform-specific reset sequence after clocks are enabled.
-	 * Sky1 requires: clock enable -> reset assert -> reset deassert -> Q-channel enable
-	 */
-	panthor_platform_reset(ptdev);
-
-	/* Set DVFS power domain to maximum performance state (Sky1 requirement).
-	 * This is needed for proper GPU operation on platforms with multiple
-	 * power domains where the second PD controls DVFS.
-	 */
-	if (ptdev->pm_domain_devs[1])
-		dev_pm_genpd_set_performance_state(ptdev->pm_domain_devs[1], 1000);
-
 	panthor_devfreq_resume(ptdev);
 
 	if (panthor_device_is_initialized(ptdev) &&
@@ -737,17 +603,6 @@ int panthor_device_suspend(struct device *dev)
 	}
 
 	panthor_devfreq_suspend(ptdev);
-
-	/*
-	 * Sky1 Q-channel clock gating: Disable before clock disable.
-	 * Vendor disables this in pm_callback_runtime_off() before going
-	 * to suspend. Must happen before clocks are turned off.
-	 */
-	if (ptdev->rcsu) {
-		u32 val = readl(ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
-		val &= ~SKY1_RCSU_QCHANNEL_CLK_GATE_EN;
-		writel(val, ptdev->rcsu + SKY1_RCSU_PGCTRL_OFFSET);
-	}
 
 	clk_disable_unprepare(ptdev->clks.coregroup);
 	clk_disable_unprepare(ptdev->clks.stacks);
