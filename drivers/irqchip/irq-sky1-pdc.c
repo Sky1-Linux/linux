@@ -186,7 +186,7 @@ static int __init sky1_pdc_irqchip_init(struct device_node *node,
 		kfree(cd);
 		return -ENOMEM;
 	}
-	/* Don't set as default - only devices with interrupt-parent=<&pdc> should use PDC */
+	irq_set_default_domain(domain);
 
 	cix_domain = domain;
 	pr_info("sky1_pdc: domain created successfully for %pOF\n", node);
@@ -232,7 +232,7 @@ static int __init sky1_acpi_pdc_irqchip_init(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	/* Don't set as default - only devices with interrupt-parent should use PDC */
+	irq_set_default_domain(domain);
 	cix_domain = domain;
 
 	register_syscore_ops(&sky1_pdc_syscore_ops);

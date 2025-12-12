@@ -2898,10 +2898,11 @@
 			reg = <0x0 0x15000000 0x0 0x10000>,
 			      <0x0 0x15010000 0x0 0x480000>;
 			reg-names = "gpu_rcsu", "gpu";
-			interrupts = <GIC_SPI 237 IRQ_TYPE_LEVEL_HIGH>,
-					<GIC_SPI 238 IRQ_TYPE_LEVEL_HIGH>,
-					<GIC_SPI 239 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 237 IRQ_TYPE_LEVEL_HIGH 0>,
+					<GIC_SPI 238 IRQ_TYPE_LEVEL_HIGH 0>,
+					<GIC_SPI 239 IRQ_TYPE_LEVEL_HIGH 0>;
 			interrupt-names = "JOB", "MMU", "GPU";
+			status = "okay";
 			system-coherency = <0>;
 			physical-memory-group-manager = <&gpu_physical_memory_group_manager>;
 			protected-memory-allocator = <&gpu_protected_memory_allocator>;
