@@ -4,6 +4,7 @@
 /* Copyright 2023 Collabora ltd. */
 
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/mm.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -113,6 +114,9 @@ static int panthor_pm_domain_init(struct panthor_device *ptdev)
 						 "power-domains",
 						 "#power-domain-cells");
 
+	dev_info(ptdev->base.dev, "panthor: pm_domain_init: num_domains=%d\n",
+		 num_domains);
+
 	/*
 	 * Single domain is handled by the core, and, if only a single power
 	 * the power domain is requested, the property is optional.
@@ -135,6 +139,8 @@ static int panthor_pm_domain_init(struct panthor_device *ptdev)
 				i, err);
 			goto err;
 		}
+		dev_info(ptdev->base.dev, "panthor: attached pm-domain %d: %s\n",
+			 i, dev_name(ptdev->pm_domain_devs[i]));
 
 		ptdev->pm_domain_links[i] = device_link_add(ptdev->base.dev,
 				ptdev->pm_domain_devs[i], DL_FLAG_PM_RUNTIME |
@@ -145,8 +151,10 @@ static int panthor_pm_domain_init(struct panthor_device *ptdev)
 			err = -ENODEV;
 			goto err;
 		}
+		dev_info(ptdev->base.dev, "panthor: device link %d created\n", i);
 	}
 
+	dev_info(ptdev->base.dev, "panthor: pm_domain_init completed successfully\n");
 	return 0;
 
 err:
@@ -272,6 +280,8 @@ int panthor_device_init(struct panthor_device *ptdev)
 	struct page *p;
 	int ret;
 
+	dev_info(ptdev->base.dev, "panthor: probe starting\n");
+
 	init_completion(&ptdev->unplug.done);
 	ret = drmm_mutex_init(&ptdev->base, &ptdev->unplug.lock);
 	if (ret)
@@ -363,9 +373,14 @@ int panthor_device_init(struct panthor_device *ptdev)
 	if (ret)
 		goto err_release_pm_domains;
 
+	dev_info(ptdev->base.dev, "panthor: pm_runtime_resume_and_get...\n");
+	msleep(100);
 	ret = pm_runtime_resume_and_get(ptdev->base.dev);
 	if (ret)
 		goto err_release_pm_domains;
+
+	dev_info(ptdev->base.dev, "panthor: pm_runtime_resume_and_get returned %d\n", ret);
+	msleep(100);
 
 	/* If PM is disabled, we need to call panthor_device_resume() manually. */
 	if (!IS_ENABLED(CONFIG_PM)) {
@@ -374,6 +389,62 @@ int panthor_device_init(struct panthor_device *ptdev)
 			goto err_release_pm_domains;
 	}
 
+	/*
+	 * Sky1 GPU power probe sequence (from vendor driver):
+	 * Power domain on -> clock enable -> IP Reset assert -> IP Reset de-assert
+	 * -> qchannel clock gating enable
+	 *
+	 * At this point power domains are active and clocks are enabled.
+	 * We need to reset the GPU IP and enable qchannel clock gating before
+	 * any register access.
+	 */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall") &&
+	    ptdev->gpu_reset && ptdev->sky1_rcsu_reg) {
+		u32 pgctrl;
+
+		dev_info(ptdev->base.dev, "panthor: Sky1 GPU reset sequence starting...\n");
+		msleep(100);
+
+		/* Assert reset */
+		ret = reset_control_assert(ptdev->gpu_reset);
+		if (ret) {
+			dev_err(ptdev->base.dev, "GPU reset assert failed: %d\n", ret);
+			goto err_rpm_put;
+		}
+
+		dev_info(ptdev->base.dev, "panthor: reset asserted\n");
+		msleep(100);
+
+		/* Short delay for reset to take effect */
+		usleep_range(10, 20);
+
+		/* Deassert reset */
+		ret = reset_control_deassert(ptdev->gpu_reset);
+		if (ret) {
+			dev_err(ptdev->base.dev, "GPU reset deassert failed: %d\n", ret);
+			goto err_rpm_put;
+		}
+
+		dev_info(ptdev->base.dev, "panthor: reset deasserted\n");
+		msleep(100);
+
+		/* Enable qchannel clock gating (RCSU PGCTRL register at offset 0x218) */
+		dev_info(ptdev->base.dev, "panthor: enabling qchannel clock gating at RCSU+0x218...\n");
+		msleep(100);
+
+		pgctrl = readl(ptdev->sky1_rcsu_reg + 0x218);
+		dev_info(ptdev->base.dev, "panthor: PGCTRL read = 0x%x\n", pgctrl);
+		msleep(100);
+
+		pgctrl |= BIT(0);  /* GPU_RCSU_QCHANNEL_CLOCK_GATE_ENABLE */
+		writel(pgctrl, ptdev->sky1_rcsu_reg + 0x218);
+
+		dev_info(ptdev->base.dev, "panthor: qchannel clock gating enabled\n");
+		msleep(100);
+	}
+
+	dev_info(ptdev->base.dev, "panthor: panthor_hw_init...\n");
+	msleep(100);
 	ret = panthor_hw_init(ptdev);
 	if (ret)
 		goto err_rpm_put;
