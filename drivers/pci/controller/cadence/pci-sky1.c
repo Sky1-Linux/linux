@@ -2347,6 +2347,19 @@ static int sky1_cdns_pcie_host_setup(struct cdns_pcie_rc *rc)
 
 	/* bridge->ops already set by sky1_pcie_probe() */
 
+	/*
+	 * Sky1 PCIe controller handles AER and PME through platform-level
+	 * interrupts (pcie-aer-c/f/nf, pcie-local) defined in device tree,
+	 * with custom handlers (sky1_pcie_aer_irq_handler, etc.).
+	 *
+	 * Disable portdrv's AER/PME services to prevent duplicate handling
+	 * and spurious "nobody cared" IRQ errors during hotplug. The root
+	 * port's legacy interrupt would otherwise be claimed by portdrv,
+	 * which doesn't recognize Sky1's interrupt sources.
+	 */
+	bridge->native_aer = 0;
+	bridge->native_pme = 0;
+
 	return sky1_pci_host_probe(bridge);
 }
 
