@@ -14,6 +14,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/arch_topology.h>
 #include <linux/cpu.h>
 #include <linux/cpufreq.h>
 #include <linux/cpu_cooling.h>
@@ -2787,6 +2788,9 @@ int cpufreq_boost_set_sw(struct cpufreq_policy *policy, int state)
 		pr_err("%s: Policy frequency update failed\n", __func__);
 		return ret;
 	}
+
+	/* Update capacity_freq_ref so schedutil uses the new max frequency */
+	topology_update_freq_ref(policy);
 
 	ret = freq_qos_update_request(policy->max_freq_req, policy->max);
 	if (ret < 0)
