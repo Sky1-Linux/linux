@@ -8210,6 +8210,20 @@ int rtw89_hw_scan_offload(struct rtw89_dev *rtwdev,
 	if (!rtwvif_link)
 		return -EINVAL;
 
+	/*
+	 * Check driver/firmware readiness before sending H2C commands.
+	 * During rapid driver rebind (hotplug), userspace may trigger
+	 * scans before driver is fully initialized, causing timeouts.
+	 * RTW89_FLAG_RUNNING is set at the end of rtw89_core_start()
+	 * after firmware init and RF calibration complete.
+	 * Return -EBUSY so mac80211 can retry later.
+	 */
+	if (!test_bit(RTW89_FLAG_RUNNING, rtwdev->flags)) {
+		rtw89_debug(rtwdev, RTW89_DBG_FW,
+			    "scan offload rejected: driver not running\n");
+		return -EBUSY;
+	}
+
 	connected = rtwdev->scan_info.connected;
 	opt.enable = enable;
 	opt.target_ch_mode = connected;
@@ -8233,7 +8247,22 @@ int rtw89_hw_scan_offload(struct rtw89_dev *rtwdev,
 		opt.opch_end = connected ? 0 : RTW89_CHAN_INVALID;
 	}
 
+	/*
+	 * During rapid driver rebind (hotplug), firmware may need extra time
+	 * to be ready for scan commands. Retry with backoff on timeout.
+	 * Only retry scan start - abort failures during teardown are expected
+	 * and non-fatal, so fail fast rather than delaying shutdown.
+	 */
 	ret = rtw89_mac_scan_offload(rtwdev, &opt, rtwvif_link, false);
+	if (ret == -ETIMEDOUT && enable) {
+		int retry;
+
+		for (retry = 1; retry <= 3 && ret == -ETIMEDOUT; retry++) {
+			rtw89_info(rtwdev, "scan offload timeout, retry %d/3\n", retry);
+			msleep(100 * retry);
+			ret = rtw89_mac_scan_offload(rtwdev, &opt, rtwvif_link, false);
+		}
+	}
 
 out:
 	return ret;
