@@ -2072,6 +2072,8 @@
 
 &smmu_mmhub {
 	status = "okay";
+	/* Display controller SIDs active at boot (bootloader splash screen) */
+	arm,boot-active-sids = <0x06 0x07 0x09 0x0a>;
 };
 
 /* PCIe X16 Slot */
