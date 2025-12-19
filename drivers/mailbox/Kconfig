@@ -360,7 +360,7 @@ config THEAD_TH1520_MBOX
 	  things.
 
 config CIX_MBOX
-        tristate "CIX Mailbox"
+        bool "CIX Mailbox"
         depends on ARCH_CIX || COMPILE_TEST
         depends on OF
         help
