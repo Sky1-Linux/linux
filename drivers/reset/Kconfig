@@ -399,7 +399,7 @@ source "drivers/reset/hisilicon/Kconfig"
 source "drivers/reset/tegra/Kconfig"
 
 config RESET_SKY1
-	tristate "CIX Sky1 Reset Controller"
+	bool "CIX Sky1 Reset Controller"
 	depends on ARCH_CIX || COMPILE_TEST
 	default ARCH_CIX
 	help

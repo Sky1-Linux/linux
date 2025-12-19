@@ -54,7 +54,7 @@ config HWSPINLOCK_SUN6I
 	  If unsure, say N.
 
 config HWSPINLOCK_SKY1
-	tristate "Sky1 Hardware Spinlock device"
+	bool "Sky1 Hardware Spinlock device"
 	depends on ARCH_CIX || COMPILE_TEST
 	help
 	  Say y here to support the Sky1 Hardware Spinlock device which provides

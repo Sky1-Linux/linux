@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 config PHY_CIX_PCIE
-	tristate "CIX Sky1 PCIe PHY driver"
+	bool "CIX Sky1 PCIe PHY driver"
 	depends on ARCH_CIX || COMPILE_TEST
 	depends on OF
 	select GENERIC_PHY
@@ -11,7 +11,7 @@ config PHY_CIX_PCIE
 	  on CIX Sky1 platforms.
 
 config PHY_CIX_USB2
-	tristate "CIX Sky1 USB2 PHY driver"
+	bool "CIX Sky1 USB2 PHY driver"
 	depends on ARCH_CIX || COMPILE_TEST
 	depends on OF
 	select GENERIC_PHY
@@ -19,7 +19,7 @@ config PHY_CIX_USB2
 	  Enable this to support the USB2 PHY on CIX Sky1 SoCs.
 
 config PHY_CIX_USB3
-	tristate "CIX Sky1 USB3 PHY driver"
+	bool "CIX Sky1 USB3 PHY driver"
 	depends on ARCH_CIX || COMPILE_TEST
 	depends on OF
 	select GENERIC_PHY
@@ -27,7 +27,7 @@ config PHY_CIX_USB3
 	  Enable this to support the USB3 PHY on CIX Sky1 SoCs.
 
 config PHY_CIX_USBDP
-	tristate "CIX Sky1 USB-DP combo PHY driver"
+	bool "CIX Sky1 USB-DP combo PHY driver"
 	depends on ARCH_CIX || COMPILE_TEST
 	depends on OF
 	select GENERIC_PHY

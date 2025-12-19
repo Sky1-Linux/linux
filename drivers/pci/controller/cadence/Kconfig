@@ -78,7 +78,7 @@ config PCI_J721E_EP
 	  core.
 
 config PCI_SKY1
-	tristate "CIX Sky1 PCIe controller (host mode)"
+	bool "CIX Sky1 PCIe controller (host mode)"
 	depends on OF && (ARCH_CIX || COMPILE_TEST)
 	select PCIE_CADENCE_HOST
 	help
