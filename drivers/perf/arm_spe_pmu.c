@@ -1191,6 +1191,15 @@ static void __arm_spe_pmu_dev_probe(void *info)
 	spe_pmu->features |= SPE_PMU_FEAT_DEV_PROBED;
 }
 
+/* Check if current CPU supports SPE (for heterogeneous big.LITTLE systems) */
+static bool arm_spe_pmu_cpu_supported(void)
+{
+	u64 dfr0 = read_sysreg(id_aa64dfr0_el1);
+	int pmsver = cpuid_feature_extract_unsigned_field(dfr0,
+					ID_AA64DFR0_EL1_PMSVer_SHIFT);
+	return pmsver != 0;
+}
+
 static void __arm_spe_pmu_reset_local(void)
 {
 	/*
@@ -1212,6 +1221,10 @@ static void __arm_spe_pmu_setup_one(void *info)
 {
 	struct arm_spe_pmu *spe_pmu = info;
 
+	/* Skip CPUs that don't support SPE (e.g., A520 in big.LITTLE) */
+	if (!arm_spe_pmu_cpu_supported())
+		return;
+
 	__arm_spe_pmu_reset_local();
 	enable_percpu_irq(spe_pmu->irq, IRQ_TYPE_NONE);
 }
@@ -1219,6 +1232,10 @@ static void __arm_spe_pmu_setup_one(void *info)
 static void __arm_spe_pmu_stop_one(void *info)
 {
 	struct arm_spe_pmu *spe_pmu = info;
+
+	/* Skip CPUs that don't support SPE */
+	if (!arm_spe_pmu_cpu_supported())
+		return;
 
 	disable_percpu_irq(spe_pmu->irq);
 	__arm_spe_pmu_reset_local();
