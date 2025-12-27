@@ -188,7 +188,8 @@ static void trilin_dptx_cix_unbind(struct device *comp, struct device *master,
 
 	trilin_dp_remove(dpsub);
 
-	device_link_del(dpsub->link);
+	if (dpsub->link)
+		device_link_del(dpsub->link);
 }
 
 static const struct component_ops trilin_dptx_cix_ops = {
