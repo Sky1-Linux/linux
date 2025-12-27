@@ -12,3 +12,19 @@ config CIX_SKY1_SOCINFO
 
 	  This driver can also be built as a module. If so, the module
 	  will be called sky1-socinfo.
+
+config CIX_DDR_LP
+	tristate "CIX DDR Low Power control driver"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on HAVE_ARM_SMCCC
+	default ARCH_CIX
+	help
+	  Say yes here to enable support for the CIX DDR low power control
+	  driver. This allows enabling/disabling DDR self-refresh and power-down
+	  states via SMC calls to TF-A firmware.
+
+	  The driver exposes a sysfs interface at /sys/devices/.../on to control
+	  DDR low power mode (1=enabled, 0=disabled).
+
+	  This driver can also be built as a module. If so, the module
+	  will be called cix-ddr-lp.
