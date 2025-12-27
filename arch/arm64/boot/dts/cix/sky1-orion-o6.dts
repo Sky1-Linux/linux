@@ -2421,3 +2421,11 @@
 &sfh_scp {
 	status = "okay";
 };
+
+&cix_ddrlp {
+	status = "okay";
+};
+
+&cix_ipa {
+	status = "okay";
+};
