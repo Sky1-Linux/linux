@@ -28,3 +28,19 @@ config CIX_DDR_LP
 
 	  This driver can also be built as a module. If so, the module
 	  will be called cix-ddr-lp.
+
+config CIX_BUS_PERF
+	tristate "CIX Bus Performance State Control driver"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on PM_GENERIC_DOMAINS
+	depends on PM_OPP
+	default ARCH_CIX
+	help
+	  Say yes here to enable support for the CIX CI700/NI700 bus frequency
+	  control driver. This allows controlling memory interconnect frequency
+	  via SCMI performance domains.
+
+	  The driver exposes a sysfs interface for setting bus frequency.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called cix-bus-perf.
