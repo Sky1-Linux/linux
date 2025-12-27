@@ -2426,6 +2426,10 @@
 	status = "okay";
 };
 
-&cix_ipa {
+&cix_bus_ci700 {
+	status = "okay";
+};
+
+&cix_bus_ni700 {
 	status = "okay";
 };
