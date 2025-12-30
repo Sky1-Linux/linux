@@ -155,11 +155,20 @@ static int cix_bus_perf_probe(struct platform_device *pdev)
 	opp = dev_pm_opp_find_freq_floor(dev, &freq);
 	if (!IS_ERR(opp)) {
 		bp->max_freq = freq;
-		bp->cur_freq = freq;
 		dev_pm_opp_put(opp);
 	}
 
-	dev_info(dev, "Frequency range: %lu - %lu Hz\n",
+	/* Pin to max frequency on boot */
+	ret = cix_bus_set_freq(dev, bp->max_freq);
+	if (ret) {
+		dev_err(dev, "failed to set max frequency: %d\n", ret);
+		pm_runtime_put(dev);
+		pm_runtime_disable(dev);
+		return ret;
+	}
+	bp->cur_freq = bp->max_freq;
+
+	dev_info(dev, "Frequency range: %lu - %lu Hz (pinned to max)\n",
 		 bp->min_freq, bp->max_freq);
 
 	return 0;
