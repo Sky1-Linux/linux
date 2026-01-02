@@ -208,9 +208,8 @@
 		enable-active-high;
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_em05_power_gpio>;
-		
 		gpio = <&fch_gpio0 30 GPIO_ACTIVE_HIGH>;
-		regulator-boot-on;
+		/* regulator-boot-on removed - may block on early SCMI init */
 		regulator-always-on;
 	};
 
@@ -221,7 +220,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_em05_reset_gpio>;
 		gpio = <&fch_gpio0 31 GPIO_ACTIVE_HIGH>;
-		regulator-boot-on;
+		/* regulator-boot-on removed - may block on early SCMI init */
 		regulator-always-on;
 	};
 
