@@ -322,7 +322,7 @@
             debounce-interval = <300>;
 
 			interrupt-parent = <&s5_gpio2>;
-            interrupts = <1 IRQ_TYPE_EDGE_BOTH>;
+            interrupts = <1 IRQ_TYPE_LEVEL_LOW>;
 
             wakeup-source;
         };
