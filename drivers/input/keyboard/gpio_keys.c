@@ -596,7 +596,21 @@ static int gpio_keys_setup_key(struct platform_device *pdev,
 			      CLOCK_REALTIME, HRTIMER_MODE_REL);
 
 		isr = gpio_keys_gpio_isr;
-		irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
+
+		/*
+		 * If an explicit interrupt was specified in the device tree,
+		 * use its configured trigger type instead of defaulting to
+		 * edge-both. This allows using level-triggered interrupts
+		 * on GPIO controllers that don't support edge triggers
+		 * (e.g., Cadence GPIO).
+		 */
+		if (button->irq) {
+			irqflags = irq_get_trigger_type(bdata->irq);
+			if (!irqflags)
+				irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
+		} else {
+			irqflags = IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING;
+		}
 
 		switch (button->wakeup_event_action) {
 		case EV_ACT_ASSERTED:
