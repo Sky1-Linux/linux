@@ -35,6 +35,7 @@
 #include <linux/component.h>
 #include <linux/of_device.h>
 #include <linux/module.h>
+#include <linux/pinctrl/consumer.h>
 
 #include "trilin_dptx_reg.h"
 #include "trilin_host_tmr.h"
@@ -51,6 +52,8 @@ struct trilin_dptx_cix_dev {
 	struct drm_encoder encoder;
 	struct trilin_dptx *dptx;
 	struct trilin_dpsub dpsub;
+	struct gpio_desc *pdb_gpiod;
+	bool dp_to_hdmi;
 };
 
 /* defined in dptx bridge driver */
@@ -205,6 +208,8 @@ struct linlondp_drv {
 static int trilin_dptx_cix_probe(struct platform_device *pdev)
 {
 	struct trilin_dptx_cix_dev *dptx_dev;
+	const char *str_prop;
+	int ret;
 
 	dptx_dev = devm_kzalloc(&pdev->dev, sizeof(*dptx_dev), GFP_KERNEL);
 	if (!dptx_dev)
@@ -212,11 +217,26 @@ static int trilin_dptx_cix_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, dptx_dev);
 
+	ret = of_property_read_string(pdev->dev.of_node, "dp_to_hdmi", &str_prop);
+	if (ret >= 0) {
+		if (strcmp("yes", str_prop) == 0) {
+			dptx_dev->pdb_gpiod = devm_gpiod_get_optional(&pdev->dev, "pdb", GPIOD_OUT_HIGH);
+			if (IS_ERR(dptx_dev->pdb_gpiod)) {
+				dev_dbg(&pdev->dev, "failed to pdb gpio ...\n");
+			} else {
+				msleep(10);
+			}
+			dptx_dev->dp_to_hdmi = true;
+		} else {
+			dptx_dev->dp_to_hdmi = false;
+		}
+	}
+
 #if !IS_ENABLED(CONFIG_DRM_CIX_COMPONENT_BIND_BYPASSED)
 	return component_add(&pdev->dev, &trilin_dptx_cix_ops);
 #else
 	struct device_node *ports_node, *port_node;
-	int i = 0, ret = 0, j = 0;
+	int i = 0, j = 0;
 	struct device_node *remote_node;
 	struct platform_device *dpu_pdev;
 	struct device *master_dpu_dev_0 = NULL;
@@ -330,12 +350,21 @@ static void trilin_dptx_cix_remove(struct platform_device *pdev)
 }
 
 #ifdef CONFIG_PM
+
 static int trilin_dptx_pm_suspend(struct device *dev)
 {
 	/* TODO */
 	struct trilin_dptx_cix_dev *cix_dptx = dev_get_drvdata(dev);
 	struct trilin_dpsub *dpsub = &cix_dptx->dpsub;
 	struct trilin_dp *dp = dpsub->dp;
+
+	if (cix_dptx->dp_to_hdmi) {
+		if (!IS_ERR(cix_dptx->pdb_gpiod)) {
+			gpiod_set_value(cix_dptx->pdb_gpiod, 0);
+		}
+
+		pinctrl_pm_select_sleep_state(dev);
+	}
 
 	if (dp)
 		return trilin_dp_pm_prepare(dp);
@@ -348,6 +377,15 @@ static int trilin_dptx_pm_resume(struct device *dev)
 	struct trilin_dptx_cix_dev *cix_dptx = dev_get_drvdata(dev);
 	struct trilin_dpsub *dpsub = &cix_dptx->dpsub;
 	struct trilin_dp *dp = dpsub->dp;
+
+	if (cix_dptx->dp_to_hdmi) {
+		if (!IS_ERR(cix_dptx->pdb_gpiod)) {
+			gpiod_set_value(cix_dptx->pdb_gpiod, 1);
+			msleep(10);
+		}
+
+		pinctrl_pm_select_default_state(dev);
+	}
 
 	if (dp)
 		return trilin_dp_pm_complete(dp);
