@@ -29,19 +29,16 @@
 #define IOVA_FREE  false
 #define IOVA_ALLOC true
 
-enum iommu_dma_cookie_type {
-	IOMMU_DMA_IOVA_COOKIE,
-	IOMMU_DMA_MSI_COOKIE,
-};
-
+/*
+ * Partial redefinition of the kernel-private struct iommu_dma_cookie
+ * (defined in drivers/iommu/dma-iommu.c). Only the iovad field is accessed
+ * by this driver; it must be at offset 0 to match the kernel's layout.
+ *
+ * WARNING: This is fragile — if the kernel reorders iommu_dma_cookie fields,
+ * this will break. A proper fix would avoid accessing IOMMU internals entirely.
+ */
 struct iommu_dma_cookie {
-	enum iommu_dma_cookie_type	type;
-	union {
-		struct iova_domain	iovad;
-		dma_addr_t		msi_iova;
-	};
-	struct list_head		msi_page_list;
-	struct iommu_domain		*fq_domain;
+	struct iova_domain	iovad;
 };
 
 static struct aipu_mem_region *aipu_mm_find_region_no_lock(struct aipu_memory_manager *mm,
