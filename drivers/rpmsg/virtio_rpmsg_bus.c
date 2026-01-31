@@ -15,17 +15,22 @@
 #include <linux/idr.h>
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
+#include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
+#include <linux/remoteproc.h>
 #include <linux/rpmsg.h>
 #include <linux/rpmsg/byteorder.h>
 #include <linux/rpmsg/ns.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
+#include <linux/spinlock.h>
 #include <linux/virtio.h>
 #include <linux/virtio_ids.h>
 #include <linux/virtio_config.h>
+#include <linux/virtio_ring.h>
 #include <linux/wait.h>
 
 #include "rpmsg_internal.h"
@@ -66,6 +71,17 @@ struct virtproc_info {
 	struct mutex endpoints_lock;
 	wait_queue_head_t sendq;
 	atomic_t sleepers;
+	/*
+	 * For rpmsg-lite compatibility: track avail ring index.
+	 * rpmsg-lite puts TX messages in the avail ring instead of used ring.
+	 */
+	u16 rvq_last_avail_idx;
+	/*
+	 * CIX DSP quirk: DSP firmware writes responses in-place into TX buffers
+	 * and uses the TX vring bidirectionally. When set, TX callbacks are
+	 * enabled and TX completions are scanned for DSP-originated messages.
+	 */
+	bool cix_dsp_quirk;
 };
 
 /* The feature bitmap for virtio rpmsg */
@@ -159,16 +175,22 @@ static const struct rpmsg_endpoint_ops virtio_endpoint_ops = {
 
 /**
  * rpmsg_sg_init - initialize scatterlist according to cpu address location
+ * @vrp: virtproc_info with buffer addresses for PA->DMA translation
  * @sg: scatterlist to fill
  * @cpu_addr: virtual address of the buffer
  * @len: buffer length
  *
  * An internal function filling scatterlist according to virtual address
- * location (in vmalloc or in kernel).
+ * location (in vmalloc or in kernel). Also sets DMA address for remoteproc
+ * devices that require physical-to-device address translation.
  */
 static void
-rpmsg_sg_init(struct scatterlist *sg, void *cpu_addr, unsigned int len)
+rpmsg_sg_init(struct virtproc_info *vrp, struct scatterlist *sg,
+	      void *cpu_addr, unsigned int len)
 {
+	dma_addr_t da;
+	size_t offset;
+
 	if (is_vmalloc_addr(cpu_addr)) {
 		sg_init_table(sg, 1);
 		sg_set_page(sg, vmalloc_to_page(cpu_addr), len,
@@ -177,6 +199,18 @@ rpmsg_sg_init(struct scatterlist *sg, void *cpu_addr, unsigned int len)
 		WARN_ON(!virt_addr_valid(cpu_addr));
 		sg_init_one(sg, cpu_addr, len);
 	}
+
+	/*
+	 * Compute device address for remoteproc. The DMA address returned by
+	 * dma_alloc_coherent may differ from the physical address when the
+	 * remote processor sees memory at different addresses (common for DSPs).
+	 * Use VA offset from buffer base since virt_to_phys() doesn't work
+	 * correctly for DMA coherent memory.
+	 */
+	offset = cpu_addr - vrp->rbufs;
+	da = vrp->bufs_dma + offset;
+	sg_dma_address(sg) = da;
+	sg_dma_len(sg) = len;
 }
 
 /**
@@ -619,19 +653,19 @@ static int rpmsg_send_offchannel_raw(struct rpmsg_device *rpdev,
 			 msg, sizeof(*msg) + len, true);
 #endif
 
-	rpmsg_sg_init(&sg, msg, sizeof(*msg) + len);
+	rpmsg_sg_init(vrp, &sg, msg, sizeof(*msg) + len);
 
 	mutex_lock(&vrp->tx_lock);
 
-	/* add message to the remote processor's virtqueue */
-	err = virtqueue_add_outbuf(vrp->svq, &sg, 1, msg, GFP_KERNEL);
+	/* add message to the remote processor's virtqueue (use premapped for DMA) */
+	err = virtqueue_add_outbuf_premapped(vrp->svq, &sg, 1, msg, GFP_KERNEL);
 	if (err) {
 		/*
 		 * need to reclaim the buffer here, otherwise it's lost
 		 * (memory won't leak, but rpmsg won't use it again for TX).
 		 * this will wait for a buffer management overhaul.
 		 */
-		dev_err(dev, "virtqueue_add_outbuf failed: %d\n", err);
+		dev_err(dev, "virtqueue_add_outbuf_premapped failed: %d\n", err);
 		goto out;
 	}
 
@@ -684,14 +718,21 @@ static ssize_t virtio_rpmsg_get_mtu(struct rpmsg_endpoint *ept)
 	return vch->vrp->buf_size - sizeof(struct rpmsg_hdr);
 }
 
-static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
-			     struct rpmsg_hdr *msg, unsigned int len)
+/*
+ * Handle an incoming rpmsg message: validate, find endpoint, and dispatch.
+ * This is factored out from rpmsg_recv_single() so it can be reused for
+ * CIX DSP quirk where messages arrive via TX buffers instead of RX buffers.
+ *
+ * Returns 0 on success, negative errno on failure.
+ * Does NOT handle buffer recycling - caller is responsible for that.
+ */
+static int rpmsg_handle_incoming_msg(struct virtproc_info *vrp,
+				     struct device *dev,
+				     struct rpmsg_hdr *msg, unsigned int len)
 {
 	struct rpmsg_endpoint *ept;
-	struct scatterlist sg;
 	bool little_endian = virtio_is_little_endian(vrp->vdev);
 	unsigned int msg_len = __rpmsg16_to_cpu(little_endian, msg->len);
-	int err;
 
 	dev_dbg(dev, "From: 0x%x, To: 0x%x, Len: %d, Flags: %d, Reserved: %d\n",
 		__rpmsg32_to_cpu(little_endian, msg->src),
@@ -736,20 +777,171 @@ static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
 
 		/* farewell, ept, we don't need you anymore */
 		kref_put(&ept->refcount, __ept_release);
-	} else
+	} else {
 		dev_warn_ratelimited(dev, "msg received with no recipient\n");
+	}
+
+	return 0;
+}
+
+static int rpmsg_recv_single(struct virtproc_info *vrp, struct device *dev,
+			     struct rpmsg_hdr *msg, unsigned int len)
+{
+	struct scatterlist sg;
+	int err;
+
+	err = rpmsg_handle_incoming_msg(vrp, dev, msg, len);
+	if (err)
+		return err;
 
 	/* publish the real size of the buffer */
-	rpmsg_sg_init(&sg, msg, vrp->buf_size);
+	rpmsg_sg_init(vrp, &sg, msg, vrp->buf_size);
 
-	/* add the buffer back to the remote processor's virtqueue */
-	err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, msg, GFP_KERNEL);
+	/* add the buffer back to the remote processor's virtqueue (use premapped for DMA) */
+	err = virtqueue_add_inbuf_premapped(vrp->rvq, &sg, 1, msg, NULL, GFP_KERNEL);
 	if (err < 0) {
 		dev_err(dev, "failed to add a virtqueue buffer: %d\n", err);
 		return err;
 	}
 
 	return 0;
+}
+
+/*
+ * Check for rpmsg-lite style messages in the avail ring.
+ * rpmsg-lite puts TX messages directly in the avail ring instead of filling
+ * host-provided buffers and putting them in the used ring.
+ *
+ * This function processes messages that the remote processor has queued
+ * in the RX vring's avail ring. For each message found:
+ * 1. Map the physical address to access the message
+ * 2. Copy to a temp buffer and process
+ * 3. Don't add buffer back (DSP manages buffers)
+ *
+ * Returns number of messages processed.
+ */
+static int rpmsg_recv_from_avail(struct virtproc_info *vrp)
+{
+	const struct vring *vring = virtqueue_get_vring(vrp->rvq);
+	struct rproc_vring *rvring = vrp->rvq->priv;
+	struct rproc *rproc = rvring ? rvring->rvdev->rproc : NULL;
+	struct device *dev = &vrp->vdev->dev;
+	struct rpmsg_endpoint *ept;
+	bool little_endian = virtio_is_little_endian(vrp->vdev);
+	u16 avail_idx, last_avail, num;
+	int msgs_received = 0;
+
+	if (!vring || !vring->avail || !vring->desc || !rproc)
+		return 0;
+
+	num = vring->num;
+
+	/* Read current avail index (with memory barrier) */
+	avail_idx = virtio16_to_cpu(vrp->vdev, READ_ONCE(vring->avail->idx));
+	last_avail = vrp->rvq_last_avail_idx;
+
+	if (avail_idx != last_avail)
+		dev_info(dev, "rpmsg_recv_from_avail: avail_idx=%u last_avail=%u num=%u\n",
+			 avail_idx, last_avail, num);
+
+	/* Process new entries in avail ring */
+	while (last_avail != avail_idx) {
+		u16 desc_idx;
+		struct vring_desc *desc;
+		struct rpmsg_hdr *msg;
+		u64 da;
+		u32 len, msg_len;
+		void *va;
+		bool is_iomem;
+
+		/* Get descriptor index from avail ring */
+		desc_idx = virtio16_to_cpu(vrp->vdev,
+				vring->avail->ring[last_avail % num]);
+		if (desc_idx >= num) {
+			dev_warn(dev, "rpmsg-lite: bad desc idx %u\n", desc_idx);
+			last_avail++;
+			continue;
+		}
+
+		desc = &vring->desc[desc_idx];
+		len = virtio32_to_cpu(vrp->vdev, desc->len);
+
+		/*
+		 * Get message pointer - desc->addr is a device address (DA).
+		 * Use rproc_da_to_va() to translate to kernel virtual address
+		 * using the remoteproc carveout mappings.
+		 */
+		da = virtio64_to_cpu(vrp->vdev, desc->addr);
+		va = rproc_da_to_va(rproc, da, len, &is_iomem);
+		if (!va) {
+			dev_warn(dev, "rpmsg-lite: da 0x%llx translation failed\n",
+				 da);
+			last_avail++;
+			continue;
+		}
+
+		/* Copy message to temp buffer for processing */
+		msg = kmalloc(len, GFP_ATOMIC);
+		if (!msg) {
+			last_avail++;
+			continue;
+		}
+
+		if (is_iomem)
+			memcpy_fromio(msg, (void __iomem *)va, len);
+		else
+			memcpy(msg, va, len);
+
+		/*
+		 * rpmsg-lite pre-populates avail ring with empty buffer
+		 * descriptors at init. Skip these - they have msg->len=0.
+		 */
+		msg_len = __rpmsg16_to_cpu(little_endian, msg->len);
+		if (msg_len == 0) {
+			kfree(msg);
+			last_avail++;
+			continue;
+		}
+
+		dev_dbg(dev, "rpmsg-lite RX: desc=%u src=0x%x dst=0x%x len=%u\n",
+			desc_idx,
+			__rpmsg32_to_cpu(little_endian, msg->src),
+			__rpmsg32_to_cpu(little_endian, msg->dst),
+			msg_len);
+
+		/* Process the message - find endpoint and deliver */
+		mutex_lock(&vrp->endpoints_lock);
+		ept = idr_find(&vrp->endpoints,
+			       __rpmsg32_to_cpu(little_endian, msg->dst));
+		if (ept)
+			kref_get(&ept->refcount);
+		mutex_unlock(&vrp->endpoints_lock);
+
+		if (ept) {
+			mutex_lock(&ept->cb_lock);
+			if (ept->cb)
+				ept->cb(ept->rpdev, msg->data, msg_len, ept->priv,
+					__rpmsg32_to_cpu(little_endian, msg->src));
+			mutex_unlock(&ept->cb_lock);
+			kref_put(&ept->refcount, __ept_release);
+			msgs_received++;
+		} else {
+			dev_warn_ratelimited(dev,
+				"rpmsg-lite: msg with no recipient (dst=0x%x)\n",
+				__rpmsg32_to_cpu(little_endian, msg->dst));
+		}
+
+		kfree(msg);
+		last_avail++;
+	}
+
+	vrp->rvq_last_avail_idx = last_avail;
+
+	if (msgs_received)
+		dev_dbg(dev, "rpmsg-lite: received %d messages from avail ring\n",
+			msgs_received);
+
+	return msgs_received;
 }
 
 /* called when an rx buffer is used, and it's time to digest a message */
@@ -761,13 +953,11 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 	unsigned int len, msgs_received = 0;
 	int err;
 
+	/* First try standard virtio: check used ring */
 	msg = virtqueue_get_buf(rvq, &len);
-	if (!msg) {
-		dev_err(dev, "uhm, incoming signal, but no used buffer ?\n");
-		return;
-	}
 
 	while (msg) {
+		/* Standard virtio path - add buffer back after processing */
 		err = rpmsg_recv_single(vrp, dev, msg, len);
 		if (err)
 			break;
@@ -777,11 +967,80 @@ static void rpmsg_recv_done(struct virtqueue *rvq)
 		msg = virtqueue_get_buf(rvq, &len);
 	}
 
-	dev_dbg(dev, "Received %u messages\n", msgs_received);
+	/*
+	 * If no messages in used ring, check avail ring for rpmsg-lite style.
+	 * rpmsg-lite firmware puts TX messages directly in avail ring.
+	 */
+	if (!msgs_received)
+		msgs_received = rpmsg_recv_from_avail(vrp);
 
-	/* tell the remote processor we added another available rx buffer */
-	if (msgs_received)
+	if (msgs_received) {
+		dev_dbg(dev, "Received %u messages\n", msgs_received);
+		/* tell the remote processor we added another available rx buffer */
 		virtqueue_kick(vrp->rvq);
+	}
+}
+
+/*
+ * CIX DSP quirk: Check TX completions for DSP-originated messages.
+ *
+ * The CIX DSP firmware writes responses in-place into TX buffers and uses
+ * the TX vring bidirectionally. This function drains TX completions and
+ * treats any that look like DSP->host messages as inbound traffic.
+ *
+ * Heuristic: A message is DSP-originated if:
+ *   - len >= sizeof(rpmsg_hdr) and msg->len > 0
+ *   - msg->src == 0 (DSP system endpoint) OR
+ *   - msg->src >= RPMSG_RESERVED_ADDRESSES (DSP dynamic endpoints)
+ *
+ * Linux endpoints use addresses in [1, RPMSG_RESERVED_ADDRESSES).
+ */
+static void rpmsg_check_tx_for_response(struct virtproc_info *vrp)
+{
+	struct virtqueue *svq = vrp->svq;
+	struct device *dev = &vrp->vdev->dev;
+	struct rpmsg_hdr *msg;
+	unsigned int len;
+	bool little_endian = virtio_is_little_endian(vrp->vdev);
+	int msgs_received = 0;
+
+	/* Drain all used TX buffers */
+	while ((msg = virtqueue_get_buf(svq, &len)) != NULL) {
+		u32 src;
+
+		if (len < sizeof(*msg)) {
+			/* Too small to be a valid message, skip */
+			continue;
+		}
+
+		src = __rpmsg32_to_cpu(little_endian, msg->src);
+
+		/*
+		 * CIX DSP quirk heuristic: DSP-originated messages have
+		 * src == 0 (system endpoint) or src >= 1024 (DSP endpoints).
+		 * Linux uses src in [1, 1024).
+		 */
+		if (msg->len &&
+		    (src == 0 || src >= RPMSG_RESERVED_ADDRESSES)) {
+			dev_dbg(dev, "CIX DSP: TX response src=%u dst=%u len=%u\n",
+				src,
+				__rpmsg32_to_cpu(little_endian, msg->dst),
+				__rpmsg16_to_cpu(little_endian, msg->len));
+
+			/* Treat as inbound message */
+			rpmsg_handle_incoming_msg(vrp, dev, msg, len);
+			msgs_received++;
+		}
+
+		/*
+		 * TX buffer recycling: The buffer came from vrp->sbufs pool.
+		 * Unlike RX path, we don't requeue it - the TX send path
+		 * manages the buffer pool via last_sbuf.
+		 */
+	}
+
+	if (msgs_received)
+		dev_dbg(dev, "CIX DSP: processed %d TX responses\n", msgs_received);
 }
 
 /*
@@ -796,6 +1055,10 @@ static void rpmsg_xmit_done(struct virtqueue *svq)
 	struct virtproc_info *vrp = svq->vdev->priv;
 
 	dev_dbg(&svq->vdev->dev, "%s\n", __func__);
+
+	/* CIX DSP quirk: check for DSP-originated messages in TX buffers */
+	if (vrp->cix_dsp_quirk)
+		rpmsg_check_tx_for_response(vrp);
 
 	/* wake up potential senders that are waiting for a tx buffer */
 	wake_up_interruptible(&vrp->sendq);
@@ -865,6 +1128,24 @@ static int rpmsg_probe(struct virtio_device *vdev)
 
 	vrp->vdev = vdev;
 
+	/* Check if this is a CIX DSP which requires TX vring quirks */
+	{
+		struct rproc *rproc = rproc_get_by_child(&vdev->dev);
+
+		if (rproc) {
+			/*
+			 * The DT node is on the platform device (rproc->dev.parent),
+			 * not on the rproc device itself.
+			 */
+			struct device_node *np = rproc->dev.parent ?
+						 rproc->dev.parent->of_node : NULL;
+
+			if (np && of_device_is_compatible(np, "cix,sky1-hifi5"))
+				vrp->cix_dsp_quirk = true;
+			rproc_put(rproc);
+		}
+	}
+
 	idr_init(&vrp->endpoints);
 	mutex_init(&vrp->endpoints_lock);
 	mutex_init(&vrp->tx_lock);
@@ -901,8 +1182,7 @@ static int rpmsg_probe(struct virtio_device *vdev)
 		goto vqs_del;
 	}
 
-	dev_dbg(&vdev->dev, "buffers: va %p, dma %pad\n",
-		bufs_va, &vrp->bufs_dma);
+	dev_dbg(&vdev->dev, "buffers: va %p, dma %pad\n", bufs_va, &vrp->bufs_dma);
 
 	/* half of the buffers is dedicated for RX */
 	vrp->rbufs = bufs_va;
@@ -910,20 +1190,27 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	/* and half is dedicated for TX */
 	vrp->sbufs = bufs_va + total_buf_space / 2;
 
-	/* set up the receive buffers */
+	/* set up the receive buffers (use premapped for DMA address translation) */
 	for (i = 0; i < vrp->num_bufs / 2; i++) {
 		struct scatterlist sg;
 		void *cpu_addr = vrp->rbufs + i * vrp->buf_size;
 
-		rpmsg_sg_init(&sg, cpu_addr, vrp->buf_size);
+		rpmsg_sg_init(vrp, &sg, cpu_addr, vrp->buf_size);
 
-		err = virtqueue_add_inbuf(vrp->rvq, &sg, 1, cpu_addr,
-					  GFP_KERNEL);
+		err = virtqueue_add_inbuf_premapped(vrp->rvq, &sg, 1, cpu_addr,
+						    NULL, GFP_KERNEL);
 		WARN_ON(err); /* sanity check; this can't really happen */
 	}
 
-	/* suppress "tx-complete" interrupts */
-	virtqueue_disable_cb(vrp->svq);
+	/*
+	 * Suppress "tx-complete" interrupts for normal operation.
+	 * For CIX DSP quirk, keep TX callbacks enabled so we can detect
+	 * DSP-originated messages written in-place to TX buffers.
+	 */
+	if (!vrp->cix_dsp_quirk)
+		virtqueue_disable_cb(vrp->svq);
+	else
+		dev_info(&vdev->dev, "CIX DSP quirk: TX callbacks enabled\n");
 
 	vdev->priv = vrp;
 
@@ -974,6 +1261,14 @@ static int rpmsg_probe(struct virtio_device *vdev)
 	 */
 	if (notify)
 		virtqueue_notify(vrp->rvq);
+
+	/*
+	 * CIX DSP quirk: Process any messages the DSP may have pre-queued
+	 * in the TX vring before we came up. This catches early announcements
+	 * that were written before Linux initialized the virtio device.
+	 */
+	if (vrp->cix_dsp_quirk)
+		rpmsg_check_tx_for_response(vrp);
 
 	dev_info(&vdev->dev, "rpmsg host is online\n");
 
