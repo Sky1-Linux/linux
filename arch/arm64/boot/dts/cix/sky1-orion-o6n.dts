@@ -8,11 +8,12 @@
 /dts-v1/;
 
 #include "sky1.dtsi"
+#include <dt-bindings/input/input.h>
 
 /delete-node/ &reg_definition;
 / {
-	model = "Radxa Orion O6";
-	compatible = "radxa,orion-o6", "cix,sky1";
+	model = "Radxa Orion O6N";
+	compatible = "radxa,orion-o6n", "cix,sky1";
 
 	chosen {
 		stdout-path = &uart2;
@@ -139,7 +140,7 @@
 		compatible = "pwm-backlight";
 		enable-gpios = <&fch_gpio3 15 GPIO_ACTIVE_HIGH>;
 		pwms = <&pwm0 0 100000>;
-		status = "okay";
+		status = "disabled";
 		brightness-levels = <
 			0   1   2   3   4   5   6   7
 			8   9  10  11  12  13  14  15
@@ -178,7 +179,7 @@
 	};
 
 	panel_edp0: panel_edp0 {
-		status = "okay";
+		status = "disabled";
 		compatible = "cix-edp-panel";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_edp0>;
@@ -195,9 +196,32 @@
 	wireless_bluetooth: wireless-bluetooth {
 		compatible = "bluetooth-platdata";
 		pinctrl-names = "default";
-		pinctrl-0 = <&bt_reset_gpio>;
-		BT,reset-gpios = <&s5_gpio0 19 GPIO_ACTIVE_HIGH>;
+		pinctrl-0 = <&bt_reset_gpio>, <&bt_radio_gpio>;
+		BT,reset-gpio = <&s5_gpio2 4 GPIO_ACTIVE_LOW>;
+		BT,wake-gpio   = <&s5_gpio2 5 GPIO_ACTIVE_LOW>;
 		status = "okay";
+	};
+
+	em05_modem_power: em05-modem-power-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "em05_modem_power";
+		enable-active-high;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_em05_power_gpio>;
+		gpio = <&fch_gpio0 30 GPIO_ACTIVE_HIGH>;
+		/* regulator-boot-on removed - may block on early SCMI init */
+		regulator-always-on;
+	};
+
+	em05_modem_reset: em05-modem-reset-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "em05_modem_reset";
+		enable-active-high;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_em05_reset_gpio>;
+		gpio = <&fch_gpio0 31 GPIO_ACTIVE_HIGH>;
+		/* regulator-boot-on removed - may block on early SCMI init */
+		regulator-always-on;
 	};
 
 	vgfx_power: vgfx-power {
@@ -207,10 +231,22 @@
 		pinctrl-0 = <&vgfx_poweren_gpio>;
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
-		gpio = <&s5_gpio1 2 GPIO_ACTIVE_HIGH>;
+		gpio = <&s5_gpio0 0 GPIO_ACTIVE_HIGH>;
 		regulator-pull-down;
 		enable-active-high;
 		off-on-delay-us = <15000>;
+	};
+
+	ufs_5v0: regulator-ufs-5v0 {
+		compatible = "regulator-fixed";
+		regulator-name = "ufs_5v0";
+		pinctrl-names = "default";
+		pinctrl-0 = <&ufs_pwren_gpio>;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&s5_gpio0 13 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-always-on;
 	};
 
 	vdd_3v3_pcie: regulator-vdd-3v3-pcie {
@@ -249,6 +285,18 @@
 		enable-active-high;
 	};
 
+	cam_power_en_5v:cam-power-5v0 {
+		compatible = "regulator-fixed";
+		regulator-name = "cam_power_en_5v";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_power_en_5v_gpio>;
+		gpio = <&fch_gpio1 0 GPIO_ACTIVE_HIGH>;
+		regulator-always-on;
+		enable-active-high;
+	};
+
 	gbe2_power_3v3: gbe2-power-3v3 {
 		compatible = "regulator-fixed";
 		regulator-name = "gbe2_power_3v3";
@@ -262,18 +310,48 @@
 		off-on-delay-us = <15000>;
 	};
 
-	usb20f_5v: usb20f-5v {
-		compatible = "regulator-fixed";
-		regulator-name = "usb20f_5v";
+	gpio-keys {
+        compatible = "gpio-keys";
+        pinctrl-names = "default";
+        pinctrl-0 = <&power_key>;
+
+        power-button {
+            label = "Power Button";
+            linux,code = <116>;
+            gpios = <&s5_gpio2 1 GPIO_ACTIVE_LOW>;
+            debounce-interval = <300>;
+
+			interrupt-parent = <&s5_gpio2>;
+            interrupts = <1 IRQ_TYPE_LEVEL_LOW>;
+
+            wakeup-source;
+        };
+    };
+
+	gpio-leds {
+		compatible = "gpio-leds";
 		pinctrl-names = "default";
-		pinctrl-0 = <&usb20f_5v_gpio>;
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-		gpio = <&s5_gpio2 6 GPIO_ACTIVE_HIGH>;
-		enable-active-high;
-		regulator-always-on;
-		regulator-boot-on;
-		off-on-delay-us = <15000>;
+		status = "okay";
+
+		power-led {
+			gpios = <&s5_gpio2 0 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+			default-state = "on";
+		};
+
+		status-led {
+			gpios = <&s5_gpio0 7 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "heartbeat";
+			default-state = "on";
+		};
+
+		user-led {
+			pinctrl-names = "default";
+			pinctrl-0 = <&user_led>;
+			gpios = <&s5_gpio2 6 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "default-off";
+			default-state = "off";
+		};
 	};
 };
 
@@ -294,6 +372,7 @@
 };
 
 &s5_gpio0 {
+	gpio-io-mask = <0x20003441>;
 	status = "okay";
 };
 
@@ -307,12 +386,10 @@
 
 &iomuxc_s5 {
 	status = "okay";
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_hog_s5>;
 
-	pinctrl_hog_s5: pinctrl_hog_s5 {
+	ufs_pwren_gpio: ufs_pwren_gpio {
 		sky1,pins = <
-			CIX_PAD_GPIO014_FUNC_GPIO014  (PULL_UP|DS_LEVEL4) /* GPIO14 hp det */
+			CIX_PAD_GPIO014_FUNC_GPIO014  (PULL_UP|DS_LEVEL4) /* GPIO0-14 */
 		>;
 	};
 
@@ -324,13 +401,19 @@
 
 	vgfx_poweren_gpio: vgfx_poweren_gpio {
 		sky1,pins = <
-			CIX_PAD_SFI_GPIO2_FUNC_GPIO017 (PULL_UP|DS_LEVEL4) /* GPIO0-17 */
+			CIX_PAD_GPIO018_FUNC_GPIO018 (PULL_UP|DS_LEVEL4) /* GPIO0-01 */
 		>;
 	};
 
 	bt_reset_gpio: bt_reset_gpio {
 		sky1,pins = <
-			CIX_PAD_GPIO019_FUNC_GPIO019 (PULL_UP|ST|DS_LEVEL7) /* GPIO0-19 */
+			CIX_PAD_GPIO019_FUNC_SFI_GPIO4 (PULL_UP|DS_LEVEL4) /* GPIO0-19 */
+		>;
+	};
+
+	bt_radio_gpio: bt_radio_gpio {
+		sky1,pins = <
+			CIX_PAD_GPIO020_FUNC_SFI_GPIO5 (PULL_UP|DS_LEVEL4) /* GPIO0-20 */
 		>;
 	};
 
@@ -496,21 +579,9 @@
 		>;
 	};
 
-	pinctrl_hiddev_68_irq: pinctrl_hiddev_68_irq {
-		sky1,pins = <
-			CIX_PAD_GPIO010_FUNC_GPIO010 (PULL_UP|DS_LEVEL4) /* GPIO010 - S5_gpio0 9 */
-		>;
-	};
-
-	pinctrl_hiddev_15_irq: pinctrl_hiddev_15_irq {
-		sky1,pins = <
-			CIX_PAD_GPIO010_FUNC_GPIO010 (PULL_UP|DS_LEVEL4) /* GPIO010 - S5_gpio0 9 */
-		>;
-	};
-
 	gbe1_poweren_gpio: gbe1_poweren_gpio {
 		sky1,pins = <
-			CIX_PAD_GPIO022_FUNC_GPIO022 (PULL_UP|ST|DS_LEVEL7) /* GPIO022 - S5_gpio2 7 */
+			CIX_PAD_GPIO022_FUNC_SFI_GPIO7 (PULL_UP|ST|DS_LEVEL7) /* GPIO022 - S5_gpio2 7 */
 		>;
 	};
 
@@ -520,9 +591,27 @@
 		>;
 	};
 
-	usb20f_5v_gpio: usb20f-5v-gpio {
+	power_key: power_key {
 		sky1,pins = <
-			CIX_PAD_GPIO021_FUNC_GPIO021 (PULL_UP|ST|DS_LEVEL7) /* GPIO021 - S5_gpio2 6 */
+			CIX_PAD_SFI_GPIO1_FUNC_SFI_GPIO1 (PULL_UP|DS_LEVEL4) /* GPIO016 - S5_gpio2 1 */
+		>;
+	};
+
+	user_led: user_led {
+		sky1,pins = <
+			CIX_PAD_GPIO021_FUNC_SFI_GPIO6 (PULL_UP|DS_LEVEL4) /* GPIO021 - S5_gpio2 6 */
+		>;
+	};
+
+	usbc0_int: usbc0_int {
+		sky1,pins = <
+			CIX_PAD_GPIO009_FUNC_GPIO009 (PULL_UP|DS_LEVEL4) /* GPIO009 - S5_gpio0 8 */
+		>;
+	};
+
+	usbc0_gpio: usbc0_gpio {
+		sky1,pins = <
+			CIX_PAD_GPIO007_FUNC_GPIO007 (PULL_UP|DS_LEVEL4) /* GPIO009 - S5_gpio0 8 */
 		>;
 	};
 };
@@ -556,7 +645,7 @@
 
 	pinctrl_fch_pwm1: pinctrl_fch_pwm1 {
 		sky1,pins = <
-			CIX_PAD_UART0_TXD_FUNC_PWM0 (PULL_DOWN|ST|DS_LEVEL7)
+			CIX_PAD_UART1_TXD_FUNC_FAN_OUT0 (PULL_DOWN|ST|DS_LEVEL7)
 		>;
 	};
 
@@ -684,8 +773,8 @@
 
 	pinctrl_fch_i2c5: pinctrl_fch_i2c5 {
 		sky1,pins = <
-			CIX_PAD_I2C5_SCL_FUNC_I2C5_SCL (PULL_UP|DS_LEVEL7)
-			CIX_PAD_I2C5_SDA_FUNC_I2C5_SDA (PULL_UP|DS_LEVEL7)
+			CIX_PAD_I2C5_SCL_FUNC_I2C5_SCL (PULL_UP|ST|DS_LEVEL12)
+			CIX_PAD_I2C5_SDA_FUNC_I2C5_SDA (PULL_UP|ST|DS_LEVEL12)
 		>;
 	};
 
@@ -862,6 +951,23 @@
 		>;
 	};
 
+	pinctrl_em05_reset_gpio: pinctrl_em05_reset_gpio {
+		sky1,pins = <
+			CIX_PAD_I2S2_TWS_FUNC_GPIO074 (PULL_UP|DS_LEVEL4) /* GPIO074 */
+		>;
+	};
+
+	pinctrl_em05_power_gpio: pinctrl_em05_power_gpio {
+		sky1,pins = <
+			CIX_PAD_I2S2_TSCK_FUNC_GPIO073 (PULL_UP|DS_LEVEL4) /* GPIO0073 */
+		>;
+	};
+
+	cam_power_en_5v_gpio: cam_power_en_5v_gpio {
+		sky1,pins = <
+			CIX_PAD_I2S2_DATA_IN0_FUNC_GPIO075 (PULL_UP|DS_LEVEL4) /* GPIO0075 */
+		>;
+	};
 };
 
 &pwm0 {
@@ -873,7 +979,7 @@
 &pwm1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_fch_pwm1>;
-	status = "disabled";
+	status = "okay";
 };
 
 &hifi5 {
@@ -1003,7 +1109,7 @@
 	pinctrl-0 = <&pinctrl_hda>;
 	pdb-gpios = <&fch_gpio3 5 GPIO_ACTIVE_HIGH>;
 	memory-region = <&audio_alsa_hda>;
-	status = "okay";
+	status = "disabled";
 };
 
 &sensorhub {
@@ -1079,7 +1185,7 @@
 };
 
 &dp2 {
-	status = "okay";
+	status = "disabled";
 	edp-panel = <&panel_edp0>;
 	cix,dp-max-rate = <540000>;
 
@@ -1232,7 +1338,7 @@
 };
 
 &dpu2 {
-	status = "okay";
+	status = "disabled";
 	aclk_freq_fixed = <800000000>;
 
 	pipeline@0 {
@@ -1461,20 +1567,20 @@
 
 &usbc_phy2 {
 	status = "okay";
-	orientation-switch;
-	svid = <0xff01>;
+	// orientation-switch;
+	// svid = <0xff01>;
 	default_conf = /bits/ 8 <0x03>;
-	mode-switch;
+	// mode-switch;
 
-	port {
-		#address-cells = <1>;
-		#size-cells = <0>;
+	// port {
+	// 	#address-cells = <1>;
+	// 	#size-cells = <0>;
 
-		usbdpphy2_lane_switch: endpoint@0 {
-			reg = <0>;
-			remote-endpoint = <&usbc2_phy_sw>;
-		};
-	};
+	// 	usbdpphy2_lane_switch: endpoint@0 {
+	// 		reg = <0>;
+	// 		remote-endpoint = <&usbc2_phy_sw>;
+	// 	};
+	// };
 };
 
 &usb3_phy2 {
@@ -1495,18 +1601,19 @@
 
 &usbss_2 {
 	status = "okay";
-	dr_mode = "otg";
-	usb-role-switch;
+	dr_mode = "host";
+	phys = <&usb3_phy2>;
+	phy-names = "cdnsp,usb2-phy";
 
-	port {
-		#address-cells = <1>;
-		#size-cells = <0>;
+	// port {
+	// 	#address-cells = <1>;
+	// 	#size-cells = <0>;
 
-		cdnsp_2_role_switch: endpoint@0 {
-			reg = <0>;
-			remote-endpoint = <&usbc2_role_sw>;
-		};
-	};
+	// 	cdnsp_2_role_switch: endpoint@0 {
+	// 		reg = <0>;
+	// 		remote-endpoint = <&usbc2_role_sw>;
+	// 	};
+	// };
 };
 
 &usbc_phy3 {
@@ -1639,71 +1746,71 @@
 	pinctrl-0 = <&pinctrl_fch_i2c1>;
 	clock-frequency = <100000>;
 
-	rts5453_pd1_port0:rts5453@30 {
-		compatible = "realtek,rts5453h";
-		interrupt-parent = <&s5_gpio0>;
-		interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
-		id = <0>;
-		reg = <0x30>;
-		status = "disabled"; /* Temporarily disabled - race condition with cdns_role_stop */
+	// rts5453_pd1_port0:rts5453@30 {
+	// 	compatible = "realtek,rts5453h";
+	// 	interrupt-parent = <&s5_gpio0>;
+	// 	interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
+	// 	id = <0>;
+	// 	reg = <0x30>;
+	// 	status = "disabled"; /* Temporarily disabled - race condition with cdns_role_stop */
 
-		usbc_con0 {
-			data-role = "host";
-			power-role = "source";
-			try-power-role = "source";
-			#address-cells = <1>;
-			#size-cells = <0>;
+	// 	usbc_con0 {
+	// 		data-role = "host";
+	// 		power-role = "source";
+	// 		try-power-role = "source";
+	// 		#address-cells = <1>;
+	// 		#size-cells = <0>;
 
-			port@0 {
-				reg = <0>;
+	// 		port@0 {
+	// 			reg = <0>;
 
-				usbc0_role_sw: endpoint {
-					remote-endpoint = <&cdnsp_0_role_switch>;
-				};
-			};
+	// 			usbc0_role_sw: endpoint {
+	// 				remote-endpoint = <&cdnsp_0_role_switch>;
+	// 			};
+	// 		};
 
-			port@1 {
-				reg = <1>;
+	// 		port@1 {
+	// 			reg = <1>;
 
-				usbc0_phy_sw: endpoint {
-					remote-endpoint = <&usbdpphy0_lane_switch>;
-				};
-			};
-		};
-	};
+	// 			usbc0_phy_sw: endpoint {
+	// 				remote-endpoint = <&usbdpphy0_lane_switch>;
+	// 			};
+	// 		};
+	// 	};
+	// };
 
-	rts5453_pd1_port1:rts5453@31 {
-		compatible = "realtek,rts5453h";
-		interrupt-parent = <&s5_gpio0>;
-		interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
-		id = <2>;
-		reg = <0x31>;
-		status = "disabled"; /* Temporarily disabled - race condition with cdns_role_stop */
+	// rts5453_pd1_port1:rts5453@31 {
+	// 	compatible = "realtek,rts5453h";
+	// 	interrupt-parent = <&s5_gpio0>;
+	// 	interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
+	// 	id = <2>;
+	// 	reg = <0x31>;
+	// 	status = "disabled"; /* Temporarily disabled - race condition with cdns_role_stop */
 
-		usbc_con2 {
-			data-role = "host";
-			power-role = "source";
-			try-power-role = "source";
-			#address-cells = <1>;
-			#size-cells = <0>;
+	// 	usbc_con2 {
+	// 		data-role = "host";
+	// 		power-role = "source";
+	// 		try-power-role = "source";
+	// 		#address-cells = <1>;
+	// 		#size-cells = <0>;
 
-			port@0 {
-				reg = <0>;
+	// 		port@0 {
+	// 			reg = <0>;
 
-				usbc2_role_sw: endpoint {
-					remote-endpoint = <&cdnsp_2_role_switch>;
-				};
-			};
+	// 			usbc2_role_sw: endpoint {
+	// 				remote-endpoint = <&cdnsp_2_role_switch>;
+	// 			};
+	// 		};
 
-			port@1 {
-				reg = <1>;
+	// 		port@1 {
+	// 			reg = <1>;
 
-				usbc2_phy_sw: endpoint {
-					remote-endpoint = <&usbdpphy2_lane_switch>;
-				};
-			};
-		};
-	};
+	// 			usbc2_phy_sw: endpoint {
+	// 				remote-endpoint = <&usbdpphy2_lane_switch>;
+	// 			};
+	// 		};
+	// 	};
+	// };
 };
 
 &i7_isp {
@@ -1739,6 +1846,7 @@
 		actuator-src = <&isp_motor>;
 		isp-src = <&i7_isp>;
 		power0-supply = <&cam_power_en>;
+		power1-supply = <&cam_power_en_5v>;
 		status = "okay";
 	};
 
@@ -1751,7 +1859,7 @@
 		status = "okay";
 	};
 };
-/*
+
 &i2c1 {
 	imgsensor01: imgsensor01@36 {
 		compatible = "image,sensor0";
@@ -1767,10 +1875,11 @@
 		clock-names = "mclk";
 		cix,camera-module-index = <1>;
 		power0-supply = <&cam_power_en>;
+		power1-supply = <&cam_power_en_5v>;
 		status = "okay";
 	};
 };
-*/
+
 &i2c2 {
 	status = "okay";
 	pinctrl-names = "default";
@@ -1785,29 +1894,30 @@
 		reset-gpios = <&fch_gpio2 22 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_touch_panel>;
-	};
-
-	i2c-hid-dev@68 {
-		compatible = "hid-over-i2c";
-		reg = <0x68>;
-		hid-descr-addr = <0x0020>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_hiddev_68_irq>;
-		interrupt-parent = <&s5_gpio0>;
-		interrupts = <9 IRQ_TYPE_LEVEL_LOW>;
 		status = "disabled";
 	};
 
-	i2c-hid-dev@15 {
-		compatible = "hid-over-i2c";
-		reg = <0x15>;
-		hid-descr-addr = <0x0001>;
-		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_hiddev_15_irq>;
-		interrupt-parent = <&s5_gpio0>;
-		interrupts = <9 IRQ_TYPE_LEVEL_LOW>;
-		status = "disabled";
-	};
+	// i2c-hid-dev@68 {
+	// 	compatible = "hid-over-i2c";
+	// 	reg = <0x68>;
+	// 	hid-descr-addr = <0x0020>;
+	// 	pinctrl-names = "default";
+	// 	pinctrl-0 = <&pinctrl_hiddev_68_irq>;
+	// 	interrupt-parent = <&s5_gpio0>;
+	// 	interrupts = <9 IRQ_TYPE_LEVEL_LOW>;
+	// 	status = "disabled";
+	// };
+
+	// i2c-hid-dev@15 {
+	// 	compatible = "hid-over-i2c";
+	// 	reg = <0x15>;
+	// 	hid-descr-addr = <0x0001>;
+	// 	pinctrl-names = "default";
+	// 	pinctrl-0 = <&pinctrl_hiddev_15_irq>;
+	// 	interrupt-parent = <&s5_gpio0>;
+	// 	interrupts = <9 IRQ_TYPE_LEVEL_LOW>;
+	// 	status = "disabled";
+	// };
 };
 
 &i2c2_slave {
@@ -1852,19 +1962,56 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_fch_i2c5>;
 
-	keyboard_0: keyboard@3a {
-		compatible = "hid-over-i2c";
-		reg = <0x3a>;
+	cs32g05:cs32g05@51 {
+		compatible = "realtek,rts5453h";
+		pinctrl-names = "default","pd-reset";
+		pinctrl-0 = <&usbc0_int>;
 		interrupt-parent = <&s5_gpio0>;
-		interrupts = <0 IRQ_TYPE_EDGE_RISING>;
-		hid-descr-addr = <0x0001>;
-		status = "disabled";
+		interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
+		reset-gpios = <&s5_gpio0 6 GPIO_ACTIVE_LOW>;
+		pinctrl-1 = <&usbc0_gpio>;
+		id = <2>;
+		reg = <0x51 >;
+		status = "okay";
+
+		usbc_con0 {
+			data-role = "host";
+			power-role = "source";
+			try-power-role = "source";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				usbc0_role_sw: endpoint {
+					remote-endpoint = <&cdnsp_0_role_switch>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				usbc0_phy_sw: endpoint {
+					remote-endpoint = <&usbdpphy0_lane_switch>;
+				};
+			};
+		};
 	};
+
+	// keyboard_0: keyboard@3a {
+	// 	compatible = "hid-over-i2c";
+	// 	reg = <0x3a>;
+	// 	interrupt-parent = <&s5_gpio0>;
+	// 	interrupts = <0 IRQ_TYPE_EDGE_RISING>;
+	// 	hid-descr-addr = <0x0001>;
+	// 	status = "disabled";
+	// };
 };
 
 /* EC_HOST */
 &i2c6 {
-	status = "okay";
+	status = "disabled";
 	clock-frequency = <100000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_fch_i2c6>;
@@ -1875,73 +2022,73 @@
 		interrupt-parent = <&s5_gpio0>;
 		interrupts = <6 IRQ_TYPE_EDGE_RISING>;
 		wakeup-source;
-		status = "okay";
+		status = "disabled";
 	};
 };
 
-&cros_ec {
-	cros_ec_pwm: ec-pwm {
-		compatible = "google,cros-ec-pwm";
-		#pwm-cells = <1>;
-		status = "disabled";
-	};
+// &cros_ec {
+// 	cros_ec_pwm: ec-pwm {
+// 		compatible = "google,cros-ec-pwm";
+// 		#pwm-cells = <1>;
+// 		status = "disabled";
+// 	};
 
-	cix_fan: pwm-fan {
-		compatible = "pwm-fan";
-		cooling-levels = <0 150 200 255>;
-		#cooling-cells = <2>;
-		pwms = <&cros_ec_pwm 0>;
-		status = "disabled";
-	};
+// 	cix_fan: pwm-fan {
+// 		compatible = "pwm-fan";
+// 		cooling-levels = <0 150 200 255>;
+// 		#cooling-cells = <2>;
+// 		pwms = <&cros_ec_pwm 0>;
+// 		status = "disabled";
+// 	};
 
-	cix_ec_light {
-		compatible = "cix,cix-ec-light";
-		status = "disabled";
-	};
+// 	cix_ec_light {
+// 		compatible = "cix,cix-ec-light";
+// 		status = "disabled";
+// 	};
 
-	cix_ec_lid {
-		compatible = "cix,cix-ec-lid";
-		status = "disabled";
-	};
+// 	cix_ec_lid {
+// 		compatible = "cix,cix-ec-lid";
+// 		status = "disabled";
+// 	};
 
-	cix_ec_battery {
-		compatible = "cix,cix-ec-battery";
-		status = "disabled";
-	};
+// 	cix_ec_battery {
+// 		compatible = "cix,cix-ec-battery";
+// 		status = "disabled";
+// 	};
 
-	cix_ec_charge {
-		compatible = "cix,cix-ec-charge";
-		status = "disabled";
-	};
+// 	cix_ec_charge {
+// 		compatible = "cix,cix-ec-charge";
+// 		status = "disabled";
+// 	};
 
-	cix_ec_kb_backlight{
-		compatible = "cix,cix-ec-keyboard-backlight";
-		status = "disabled";
-	};
+// 	cix_ec_kb_backlight{
+// 		compatible = "cix,cix-ec-keyboard-backlight";
+// 		status = "disabled";
+// 	};
 
-	ec_gpio: cix_ec_gpio {
-		compatible = "cix,cix-ec-gpio";
-		gpio-controller;
-		#gpio-cells = <2>;
-		ngpios = <104>;
-		status = "disabled";
-	};
+// 	ec_gpio: cix_ec_gpio {
+// 		compatible = "cix,cix-ec-gpio";
+// 		gpio-controller;
+// 		#gpio-cells = <2>;
+// 		ngpios = <104>;
+// 		status = "disabled";
+// 	};
 
-	cix_ec_pwrkey {
-		compatible = "cix,cix-ec-pwrkey";
-		status = "okay";
-	};
+// 	cix_ec_pwrkey {
+// 		compatible = "cix,cix-ec-pwrkey";
+// 		status = "okay";
+// 	};
 
-	cix_ec_excp {
-		compatible = "cix,cix-ec-excp";
-		status = "disabled";
-	};
+// 	cix_ec_excp {
+// 		compatible = "cix,cix-ec-excp";
+// 		status = "disabled";
+// 	};
 
-	cix_ec_sleevekey {
-		compatible = "cix,cix-ec-sleevekey";
-		status = "okay";
-	};
-};
+// 	cix_ec_sleevekey {
+// 		compatible = "cix,cix-ec-sleevekey";
+// 		status = "okay";
+// 	};
+// };
 
 &i2c7 {
 	status = "disabled";
@@ -2119,7 +2266,7 @@
 	status = "okay";
 };
 
-/* 5GBE-1 */
+/* 2.5GBE-1 */
 &pcie_x1_1_rc {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pcie_x1_1_rc>;
@@ -2128,7 +2275,7 @@
 	status = "okay";
 };
 
-/* 5GBE-2 */
+/* 2.5GBE-2 */
 &pcie_x1_0_rc {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pcie_x1_0_rc>;
@@ -2419,17 +2566,5 @@
 };
 
 &sfh_scp {
-	status = "okay";
-};
-
-&cix_ddrlp {
-	status = "okay";
-};
-
-&cix_bus_ci700 {
-	status = "okay";
-};
-
-&cix_bus_ni700 {
 	status = "okay";
 };
