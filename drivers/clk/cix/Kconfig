@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config CLK_SKY1_AUDSS
+	bool "CIX Sky1 Audio Subsystem Clock Controller"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on MFD_SYSCON
+	depends on COMMON_CLK
+	default ARCH_CIX
+	help
+	  This enables the audio subsystem clock controller for CIX Sky1
+	  SoCs. This is required for the audio subsystem including I2S
+	  controllers and DSP.
