@@ -76,18 +76,31 @@ static int rtw89_fw_leave_lps_check(struct rtw89_dev *rtwdev, u8 macid)
 	return 0;
 }
 
-static void rtw89_ps_power_mode_change_with_hci(struct rtw89_dev *rtwdev,
-						bool enter)
+static void rtw89_ps_power_mode_change(struct rtw89_dev *rtwdev, bool enter)
 {
+	bool needs_hci_switch;
+
+	needs_hci_switch = rtwdev->chip->low_power_hci_modes & BIT(rtwdev->ps_mode) &&
+			   !test_bit(RTW89_FLAG_WOWLAN, rtwdev->flags);
+
+	/* Always synchronize TX before power transition to prevent PLE corruption.
+	 * Different chips have different HCI configurations, but all need TX queues
+	 * drained before changing power state to avoid firmware crashes.
+	 */
 	ieee80211_stop_queues(rtwdev->hw);
 	rtwdev->hci.paused = true;
 	flush_work(&rtwdev->txq_work);
 	ieee80211_wake_queues(rtwdev->hw);
 
-	rtw89_hci_pause(rtwdev, true);
+	if (needs_hci_switch)
+		rtw89_hci_pause(rtwdev, true);
+
 	rtw89_mac_power_mode_change(rtwdev, enter);
-	rtw89_hci_switch_mode(rtwdev, enter);
-	rtw89_hci_pause(rtwdev, false);
+
+	if (needs_hci_switch) {
+		rtw89_hci_switch_mode(rtwdev, enter);
+		rtw89_hci_pause(rtwdev, false);
+	}
 
 	rtwdev->hci.paused = false;
 
@@ -96,15 +109,6 @@ static void rtw89_ps_power_mode_change_with_hci(struct rtw89_dev *rtwdev,
 		napi_schedule(&rtwdev->napi);
 		local_bh_enable();
 	}
-}
-
-static void rtw89_ps_power_mode_change(struct rtw89_dev *rtwdev, bool enter)
-{
-	if (rtwdev->chip->low_power_hci_modes & BIT(rtwdev->ps_mode) &&
-	    !test_bit(RTW89_FLAG_WOWLAN, rtwdev->flags))
-		rtw89_ps_power_mode_change_with_hci(rtwdev, enter);
-	else
-		rtw89_mac_power_mode_change(rtwdev, enter);
 }
 
 void __rtw89_enter_ps_mode(struct rtw89_dev *rtwdev)

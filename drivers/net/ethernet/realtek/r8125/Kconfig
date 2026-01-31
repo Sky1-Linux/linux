@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config R8125
+	tristate "Realtek RTL8125 PCI 2.5GbE Ethernet support"
+	depends on PCI
+	select CRC32
+	help
+	  Realtek RTL8125 PCI 2.5 Gigabit Ethernet adapter driver.
+
+	  To compile this driver as a module, choose M here. The module
+	  will be called r8125.
