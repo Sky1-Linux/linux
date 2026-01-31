@@ -2362,4 +2362,14 @@ config KEEMBAY_WATCHDOG
 	  To compile this driver as a module, choose M here: the
 	  module will be called keembay_wdt.
 
+config SKY1_WATCHDOG
+	tristate "CIX Sky1 SoC watchdog"
+	depends on ARCH_CIX || (ARM64 && COMPILE_TEST)
+	select WATCHDOG_CORE
+	help
+	  This option enables support for the watchdog timer on CIX Sky1 SoCs.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called sky1_wdt.
+
 endif # WATCHDOG
