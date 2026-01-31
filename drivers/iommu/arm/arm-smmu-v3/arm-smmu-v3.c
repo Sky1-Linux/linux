@@ -4653,6 +4653,43 @@ static void __iomem *arm_smmu_ioremap(struct device *dev, resource_size_t start,
 	return devm_ioremap_resource(dev, &res);
 }
 
+/*
+ * Install bypass STEs for stream IDs specified in device tree.
+ * This handles devices that are already active at boot (e.g., display
+ * controllers left running by bootloader) before the kernel driver
+ * has attached them to the IOMMU.
+ */
+static void arm_smmu_dt_install_bypass_ste(struct arm_smmu_device *smmu)
+{
+	struct device_node *np = smmu->dev->of_node;
+	int count, i;
+	u32 sid;
+
+	if (!np)
+		return;
+
+	count = of_property_count_u32_elems(np, "arm,boot-active-sids");
+	if (count <= 0)
+		return;
+
+	for (i = 0; i < count; i++) {
+		if (of_property_read_u32_index(np, "arm,boot-active-sids",
+					       i, &sid))
+			continue;
+
+		if (arm_smmu_init_sid_strtab(smmu, sid)) {
+			dev_err(smmu->dev,
+				"boot-active SID(0x%x) bypass failed\n", sid);
+			continue;
+		}
+
+		arm_smmu_make_bypass_ste(smmu,
+			arm_smmu_get_step_for_sid(smmu, sid));
+		dev_dbg(smmu->dev,
+			"installed bypass STE for boot-active SID 0x%x\n", sid);
+	}
+}
+
 static void arm_smmu_rmr_install_bypass_ste(struct arm_smmu_device *smmu)
 {
 	struct list_head rmr_list;
@@ -4818,6 +4855,9 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
 
 	/* Check for RMRs and install bypass STEs if any */
 	arm_smmu_rmr_install_bypass_ste(smmu);
+
+	/* Install bypass STEs for boot-active devices from DT */
+	arm_smmu_dt_install_bypass_ste(smmu);
 
 	/* Reset the device */
 	ret = arm_smmu_device_reset(smmu);
