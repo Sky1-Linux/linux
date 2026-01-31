@@ -115,6 +115,12 @@ struct panthor_device {
 	/** @iomem: CPU mapping of the IOMEM region. */
 	void __iomem *iomem;
 
+	/** @sky1_rcsu_reg: Sky1 RCSU register mapping (optional). */
+	void __iomem *sky1_rcsu_reg;
+
+	/** @gpu_reset: Reset control for GPU (optional, Sky1). */
+	struct reset_control *gpu_reset;
+
 	/** @clks: GPU clocks. */
 	struct {
 		/** @core: Core clock. */
@@ -125,6 +131,9 @@ struct panthor_device {
 
 		/** @coregroup: Core group clock. This clock is optional. */
 		struct clk *coregroup;
+
+		/** @backup: Sky1 backup clocks. These clocks are optional. */
+		struct clk *backup[2];
 	} clks;
 
 	/** @coherent: True if the CPU/GPU are memory coherent. */

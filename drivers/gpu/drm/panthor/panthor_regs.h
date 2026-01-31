@@ -205,6 +205,10 @@
 #define   AS_TRANSCFG_XREADABLE				BIT(36)
 #define AS_FAULTEXTRA(as)				(MMU_AS(as) + 0x38)
 
+/* Sky1 PHBA (Page-Based Hardware Attribute) registers */
+#define GPU_SYSC_PBHA_OVERRIDE(n)			(0x320 + ((n) * 4))
+#define GPU_SYSC_ALLOC(n)				(0x340 + ((n) * 4))
+
 #define CSF_GPU_LATEST_FLUSH_ID				0x10000
 
 #define CSF_DOORBELL(i)					(0x80000 + ((i) * 0x10000))

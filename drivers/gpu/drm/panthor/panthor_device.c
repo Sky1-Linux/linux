@@ -4,7 +4,9 @@
 /* Copyright 2023 Collabora ltd. */
 
 #include <linux/clk.h>
+#include <linux/delay.h>
 #include <linux/mm.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
 #include <linux/pm_runtime.h>
@@ -51,17 +53,40 @@ static int panthor_clk_init(struct panthor_device *ptdev)
 				     PTR_ERR(ptdev->clks.core),
 				     "get 'core' clock failed");
 
-	ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "stacks");
+	/* Try vendor name first (gpu_clk_stacks), then mainline name (stacks) */
+	ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_stacks");
 	if (IS_ERR(ptdev->clks.stacks))
 		return dev_err_probe(ptdev->base.dev,
 				     PTR_ERR(ptdev->clks.stacks),
-				     "get 'stacks' clock failed");
+				     "get 'gpu_clk_stacks' clock failed");
+	if (!ptdev->clks.stacks) {
+		ptdev->clks.stacks = devm_clk_get_optional(ptdev->base.dev, "stacks");
+		if (IS_ERR(ptdev->clks.stacks))
+			return dev_err_probe(ptdev->base.dev,
+					     PTR_ERR(ptdev->clks.stacks),
+					     "get 'stacks' clock failed");
+	}
 
 	ptdev->clks.coregroup = devm_clk_get_optional(ptdev->base.dev, "coregroup");
 	if (IS_ERR(ptdev->clks.coregroup))
 		return dev_err_probe(ptdev->base.dev,
 				     PTR_ERR(ptdev->clks.coregroup),
 				     "get 'coregroup' clock failed");
+
+	/* CIX Sky1 needs additional backup clocks */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall")) {
+		ptdev->clks.backup[0] = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_200M");
+		if (IS_ERR(ptdev->clks.backup[0]))
+			return dev_err_probe(ptdev->base.dev,
+					     PTR_ERR(ptdev->clks.backup[0]),
+					     "get 'gpu_clk_200M' clock failed");
+
+		ptdev->clks.backup[1] = devm_clk_get_optional(ptdev->base.dev, "gpu_clk_400M");
+		if (IS_ERR(ptdev->clks.backup[1]))
+			return dev_err_probe(ptdev->base.dev,
+					     PTR_ERR(ptdev->clks.backup[1]),
+					     "get 'gpu_clk_400M' clock failed");
+	}
 
 	drm_info(&ptdev->base, "clock rate = %lu\n", clk_get_rate(ptdev->clks.core));
 	return 0;
@@ -75,6 +100,16 @@ static int panthor_init_power(struct device *dev)
 		return 0;
 
 	return devm_pm_domain_attach_list(dev, NULL, &pd_list);
+}
+
+static int panthor_resets_init(struct panthor_device *ptdev)
+{
+	ptdev->gpu_reset = devm_reset_control_get_optional(ptdev->base.dev, "gpu_reset");
+	if (IS_ERR(ptdev->gpu_reset))
+		return dev_err_probe(ptdev->base.dev, PTR_ERR(ptdev->gpu_reset),
+				     "failed to get gpu_reset\n");
+
+	return 0;
 }
 
 void panthor_device_unplug(struct panthor_device *ptdev)
@@ -244,10 +279,29 @@ int panthor_device_init(struct panthor_device *ptdev)
 	if (ret)
 		return ret;
 
-	ptdev->iomem = devm_platform_get_and_ioremap_resource(to_platform_device(ptdev->base.dev),
-							      0, &res);
-	if (IS_ERR(ptdev->iomem))
-		return PTR_ERR(ptdev->iomem);
+	ret = panthor_resets_init(ptdev);
+	if (ret)
+		return ret;
+
+	/* Sky1 uses resource 0 for RCSU, resource 1 for GPU registers.
+	 * Other platforms use resource 0 for GPU registers.
+	 */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall")) {
+		ptdev->iomem = devm_platform_get_and_ioremap_resource(
+				to_platform_device(ptdev->base.dev), 1, &res);
+		if (IS_ERR(ptdev->iomem))
+			return PTR_ERR(ptdev->iomem);
+
+		ptdev->sky1_rcsu_reg = devm_platform_ioremap_resource(
+				to_platform_device(ptdev->base.dev), 0);
+		if (IS_ERR(ptdev->sky1_rcsu_reg))
+			return PTR_ERR(ptdev->sky1_rcsu_reg);
+	} else {
+		ptdev->iomem = devm_platform_get_and_ioremap_resource(
+				to_platform_device(ptdev->base.dev), 0, &res);
+		if (IS_ERR(ptdev->iomem))
+			return PTR_ERR(ptdev->iomem);
+	}
 
 	ptdev->phys_addr = res->start;
 
@@ -263,7 +317,45 @@ int panthor_device_init(struct panthor_device *ptdev)
 	if (!IS_ENABLED(CONFIG_PM)) {
 		ret = panthor_device_resume(ptdev->base.dev);
 		if (ret)
-			return ret;
+			goto err_rpm_put;
+	}
+
+	/*
+	 * Sky1 GPU power probe sequence (from vendor driver):
+	 * Power domain on -> clock enable -> IP Reset assert -> IP Reset de-assert
+	 * -> qchannel clock gating enable
+	 *
+	 * At this point power domains are active and clocks are enabled.
+	 * We need to reset the GPU IP and enable qchannel clock gating before
+	 * any register access.
+	 */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall") &&
+	    ptdev->gpu_reset && ptdev->sky1_rcsu_reg) {
+		u32 pgctrl;
+
+		/* Assert reset */
+		ret = reset_control_assert(ptdev->gpu_reset);
+		if (ret) {
+			drm_err(&ptdev->base, "GPU reset assert failed: %d\n", ret);
+			goto err_rpm_put;
+		}
+
+		/* Short delay for reset to take effect */
+		usleep_range(10, 20);
+
+		/* Deassert reset */
+		ret = reset_control_deassert(ptdev->gpu_reset);
+		if (ret) {
+			drm_err(&ptdev->base, "GPU reset deassert failed: %d\n", ret);
+			goto err_rpm_put;
+		}
+
+		/* Enable qchannel clock gating (RCSU PGCTRL register at offset 0x218) */
+		pgctrl = readl(ptdev->sky1_rcsu_reg + 0x218);
+		pgctrl |= BIT(0);  /* GPU_RCSU_QCHANNEL_CLOCK_GATE_ENABLE */
+		writel(pgctrl, ptdev->sky1_rcsu_reg + 0x218);
+
+		drm_info(&ptdev->base, "Sky1 GPU reset sequence complete\n");
 	}
 
 	ret = panthor_hw_init(ptdev);

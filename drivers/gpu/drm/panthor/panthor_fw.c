@@ -1444,9 +1444,13 @@ int panthor_fw_init(struct panthor_device *ptdev)
 	INIT_LIST_HEAD(&fw->sections);
 	INIT_DELAYED_WORK(&fw->watchdog.ping_work, panthor_fw_ping_work);
 
-	irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "job");
-	if (irq <= 0)
-		return -ENODEV;
+	irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "JOB");
+	if (irq <= 0) {
+		/* Try lowercase for non-Sky1 platforms */
+		irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "job");
+		if (irq <= 0)
+			return -ENODEV;
+	}
 
 	ret = panthor_request_job_irq(ptdev, &fw->irq, irq, 0);
 	if (ret) {
