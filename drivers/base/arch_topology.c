@@ -415,6 +415,26 @@ init_cpu_capacity_callback(struct notifier_block *nb,
 	return 0;
 }
 
+/**
+ * topology_update_freq_ref - Update capacity_freq_ref when max frequency changes
+ * @policy: cpufreq policy whose max frequency has changed
+ *
+ * This should be called when boost frequencies are enabled/disabled to ensure
+ * that schedutil and other users of capacity_freq_ref see the correct max
+ * frequency for capacity calculations.
+ */
+void topology_update_freq_ref(struct cpufreq_policy *policy)
+{
+	int cpu;
+
+	for_each_cpu(cpu, policy->related_cpus) {
+		per_cpu(capacity_freq_ref, cpu) = policy->cpuinfo.max_freq;
+		freq_inv_set_max_ratio(cpu,
+				       per_cpu(capacity_freq_ref, cpu) * HZ_PER_KHZ);
+	}
+}
+EXPORT_SYMBOL_GPL(topology_update_freq_ref);
+
 static struct notifier_block init_cpu_capacity_notifier = {
 	.notifier_call = init_cpu_capacity_callback,
 };
