@@ -5,9 +5,11 @@
 #include <linux/devfreq.h>
 #include <linux/devfreq_cooling.h>
 #include <linux/platform_device.h>
+#include <linux/pm_domain.h>
 #include <linux/pm_opp.h>
 
 #include <drm/drm_managed.h>
+#include <drm/drm_print.h>
 
 #include "panthor_devfreq.h"
 #include "panthor_device.h"
@@ -21,6 +23,18 @@ struct panthor_devfreq {
 
 	/** @gov_data: Governor data. */
 	struct devfreq_simple_ondemand_data gov_data;
+
+	/**
+	 * @opp_dev: Virtual device for SCMI perf domain OPP control.
+	 *
+	 * On platforms with a named "perf" power domain (e.g. SCMI DVFS),
+	 * frequency changes must go through this virtual device rather than
+	 * the main GPU device. NULL if not using SCMI perf domain.
+	 */
+	struct device *opp_dev;
+
+	/** @opp_dl: Device link to the SCMI perf domain virtual device. */
+	struct device_link *opp_dl;
 
 	/** @busy_time: Busy time. */
 	ktime_t busy_time;
@@ -63,6 +77,7 @@ static int panthor_devfreq_target(struct device *dev, unsigned long *freq,
 				  u32 flags)
 {
 	struct panthor_device *ptdev = dev_get_drvdata(dev);
+	struct panthor_devfreq *pdevfreq = ptdev->devfreq;
 	struct dev_pm_opp *opp;
 	int err;
 
@@ -71,7 +86,10 @@ static int panthor_devfreq_target(struct device *dev, unsigned long *freq,
 		return PTR_ERR(opp);
 	dev_pm_opp_put(opp);
 
-	err = dev_pm_opp_set_rate(dev, *freq);
+	if (pdevfreq->opp_dev)
+		err = dev_pm_opp_set_rate(pdevfreq->opp_dev, *freq);
+	else
+		err = dev_pm_opp_set_rate(dev, *freq);
 	if (!err)
 		ptdev->current_frequency = *freq;
 
@@ -122,6 +140,100 @@ static struct devfreq_dev_profile panthor_devfreq_profile = {
 	.get_dev_status = panthor_devfreq_get_dev_status,
 };
 
+static void panthor_devfreq_scmi_cleanup(struct drm_device *ddev, void *data)
+{
+	struct panthor_devfreq *pdevfreq = data;
+
+	dev_pm_opp_remove_table(ddev->dev);
+
+	if (pdevfreq->opp_dl) {
+		device_link_del(pdevfreq->opp_dl);
+		pdevfreq->opp_dl = NULL;
+	}
+
+	if (pdevfreq->opp_dev) {
+		dev_pm_domain_detach(pdevfreq->opp_dev, true);
+		pdevfreq->opp_dev = NULL;
+	}
+}
+
+/**
+ * panthor_devfreq_scmi_init() - Try to set up DVFS via SCMI perf domain.
+ * @ptdev: Panthor device
+ * @pdevfreq: Panthor devfreq state
+ *
+ * On platforms with multiple power domains (e.g. Sky1 with pd_gpu + perf),
+ * the SCMI perf domain is not auto-attached by the platform bus. Explicitly
+ * attach to the named "perf" domain, read the firmware-provided OPP table,
+ * and copy it to the main device for devfreq use.
+ *
+ * Return: number of OPPs added, 0 if no perf domain found, negative on error.
+ */
+static int panthor_devfreq_scmi_init(struct panthor_device *ptdev,
+				     struct panthor_devfreq *pdevfreq)
+{
+	struct device *dev = ptdev->base.dev;
+	struct device *opp_dev;
+	struct device_link *opp_dl;
+	struct dev_pm_opp *opp;
+	unsigned long freq;
+	int count, i, ret;
+
+	opp_dev = dev_pm_domain_attach_by_name(dev, "perf");
+	if (IS_ERR_OR_NULL(opp_dev))
+		return 0;
+
+	opp_dl = device_link_add(dev, opp_dev,
+				 DL_FLAG_RPM_ACTIVE |
+				 DL_FLAG_PM_RUNTIME |
+				 DL_FLAG_STATELESS);
+	if (!opp_dl) {
+		dev_pm_domain_detach(opp_dev, true);
+		return 0;
+	}
+
+	count = dev_pm_opp_get_opp_count(opp_dev);
+	if (count <= 0) {
+		device_link_del(opp_dl);
+		dev_pm_domain_detach(opp_dev, true);
+		return 0;
+	}
+
+	/* Copy OPPs from the perf domain virtual device to the main device */
+	for (i = 0, freq = 0; ; i++, freq++) {
+		opp = dev_pm_opp_find_freq_ceil(opp_dev, &freq);
+		if (IS_ERR(opp))
+			break;
+		dev_pm_opp_put(opp);
+
+		ret = dev_pm_opp_add(dev, freq, 0);
+		if (ret) {
+			drm_warn(&ptdev->base,
+				 "Failed to add OPP %lu Hz: %d\n", freq, ret);
+			break;
+		}
+	}
+
+	if (i == 0) {
+		device_link_del(opp_dl);
+		dev_pm_domain_detach(opp_dev, true);
+		return 0;
+	}
+
+	pdevfreq->opp_dev = opp_dev;
+	pdevfreq->opp_dl = opp_dl;
+
+	ret = drmm_add_action_or_reset(&ptdev->base,
+				       panthor_devfreq_scmi_cleanup, pdevfreq);
+	if (ret)
+		return ret;
+
+	drm_info(&ptdev->base,
+		 "GPU DVFS: %d OPPs from SCMI perf domain\n", i);
+
+	return i;
+}
+
 int panthor_devfreq_init(struct panthor_device *ptdev)
 {
 	/* There's actually 2 regulators (mali and sram), but the OPP core only
@@ -145,24 +257,36 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
 
 	ptdev->devfreq = pdevfreq;
 
-	ret = devm_pm_opp_set_regulators(dev, reg_names);
-	if (ret) {
-		/* Continue if the optional regulator is missing */
-		if (ret != -ENODEV) {
-			if (ret != -EPROBE_DEFER)
-				DRM_DEV_ERROR(dev, "Couldn't set OPP regulators\n");
+	/*
+	 * On platforms with a named "perf" power domain (SCMI DVFS), the
+	 * platform bus won't auto-attach it when multiple power domains are
+	 * present. Try to attach explicitly and populate OPPs from firmware.
+	 */
+	ret = panthor_devfreq_scmi_init(ptdev, pdevfreq);
+	if (ret < 0)
+		return ret;
+
+	if (ret == 0) {
+		/* No SCMI OPPs — try regulators and DT OPP table */
+		ret = devm_pm_opp_set_regulators(dev, reg_names);
+		if (ret) {
+			/* Continue if the optional regulator is missing */
+			if (ret != -ENODEV) {
+				if (ret != -EPROBE_DEFER)
+					DRM_DEV_ERROR(dev, "Couldn't set OPP regulators\n");
+
+				return ret;
+			}
+		}
+
+		ret = devm_pm_opp_of_add_table(dev);
+		if (ret) {
+			/* Optional, continue without devfreq */
+			if (ret == -ENODEV)
+				ret = 0;
 
 			return ret;
 		}
-	}
-
-	ret = devm_pm_opp_of_add_table(dev);
-	if (ret) {
-		/* Optional, continue without devfreq */
-		if (ret == -ENODEV)
-			ret = 0;
-
-		return ret;
 	}
 
 	spin_lock_init(&pdevfreq->lock);
@@ -209,10 +333,17 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
 	ptdev->current_frequency = cur_freq;
 
 	/*
-	 * Set the recommend OPP this will enable and configure the regulator
-	 * if any and will avoid a switch off by regulator_late_cleanup()
+	 * Set the recommended OPP. This will enable and configure the regulator
+	 * if any and will avoid a switch off by regulator_late_cleanup().
+	 *
+	 * When using an SCMI perf domain, frequency changes must go through the
+	 * virtual perf device. The main device's OPPs (manually copied) have no
+	 * clock or regulator association, so set_opp on them is a no-op.
 	 */
-	ret = dev_pm_opp_set_opp(dev, opp);
+	if (pdevfreq->opp_dev)
+		ret = dev_pm_opp_set_rate(pdevfreq->opp_dev, cur_freq);
+	else
+		ret = dev_pm_opp_set_opp(dev, opp);
 	dev_pm_opp_put(opp);
 	if (ret) {
 		DRM_DEV_ERROR(dev, "Couldn't set recommended OPP\n");
