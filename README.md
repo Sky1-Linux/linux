@@ -1,0 +1,76 @@
+# Sky1-Linux/linux
+
+Full Linux kernel source with Sky1 SoC patches applied as commits on top of upstream tags.
+
+This is the development repo where patches are written, tested, and rebased. Exported patches are published to [linux-sky1](https://github.com/Sky1-Linux/linux-sky1) for distribution.
+
+## Branches
+
+| Branch | Base | Patches | Purpose |
+|--------|------|---------|---------|
+| `main` | Latest 6.18.x stable tag | 13 | LTS — production kernel |
+| `rc` | Latest 6.19-rcN tag | 12 | RC — pre-release testing |
+| `latest` | Latest 6.19.x stable tag | — | Latest stable (when 6.19 releases) |
+| `next` | Linus's master | — | Bleeding edge development |
+| `original-patches` | v6.18.7 | 78 | Archived — pre-consolidation history |
+| `master` | — | 0 | Mirror of Linus upstream |
+
+Each track branch contains the same Sky1 driver set rebased onto its respective upstream base. The `main` branch has one extra patch (dev scripts) not present in the other tracks.
+
+## Patch structure
+
+Patches are consolidated by subsystem. Each commit covers one functional area:
+
+1. **Device trees** — SoC base + board DTS (O6, O6N)
+2. **PCIe** — Cadence host controller, ATU, MSI, hotplug, I/O windows
+3. **Infrastructure** — SCMI, mailbox, pinctrl, clock, reset, hwspinlock, eFuse, SoC info
+4. **USB / PHY** — CDNSP, Type-C PD (RTS5453), USBDP PHYs
+5. **Display** — linlon-dp, trilin-dpsub
+6. **GPU** — Panthor Mali-G720 support
+7. **Audio** — HDA, DMA-350, DSP
+8. **Networking** — RTL8126 5GbE, RTL8125 2.5GbE
+9. **NPU** — ArmChina Zhouyi (30 TOPS)
+10. **VPU** — Linlon MVE video codec (H.264, HEVC, AV1, VP9)
+11. **IRQ / IOMMU / perf** — PDC, SMMU boot-active streams, ARM SPE
+12. **Misc platform** — Thermal, PWM, watchdog, DDR LP, bus DVFS, cpufreq
+13. **Dev scripts** — build-install, update-dev-boot, kernel-track-status (LTS only)
+
+## Remotes
+
+| Remote | URL | Purpose |
+|--------|-----|---------|
+| `origin` | `git.kernel.org/.../torvalds/linux.git` | Linus's tree (fetch tags, mirror master) |
+| `stable` | `git.kernel.org/.../stable/linux.git` | Stable releases (fetch specific tags) |
+| `sky1` | `github.com/Sky1-Linux/linux.git` | Our fork (push branches here) |
+
+## Workflow
+
+### Rebasing to a new stable tag
+
+```bash
+git fetch stable tag v6.18.Y --no-tags
+git rebase --onto v6.18.Y v6.18.X    # X = previous version
+# resolve conflicts, verify patch count
+git push --force sky1 HEAD:main
+```
+
+### Exporting patches to linux-sky1
+
+```bash
+rm ~/sky1-linux-distro/linux-sky1/patches/*.patch
+git format-patch -o ~/sky1-linux-distro/linux-sky1/patches \
+    --no-signature --zero-commit -M -N v6.18.Y..HEAD
+```
+
+### Building for local testing
+
+```bash
+./scripts/build-install.py        # build + install to EFI
+./scripts/update-dev-boot.py      # regenerate GRUB entries
+```
+
+## Related
+
+- [linux-sky1](https://github.com/Sky1-Linux/linux-sky1) — Exported patches + configs (what users consume)
+- [sky1-linux-build](https://github.com/Sky1-Linux/sky1-linux-build) — Debian package build scripts
+- [Sky1 Linux](https://github.com/Sky1-Linux) — Full project
