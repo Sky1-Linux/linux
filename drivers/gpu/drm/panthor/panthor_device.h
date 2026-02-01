@@ -99,6 +99,18 @@ struct panthor_device {
 	/** @iomem: CPU mapping of the IOMEM region. */
 	void __iomem *iomem;
 
+	/** @sky1_rcsu_reg: Sky1 RCSU register mapping (optional). */
+	void __iomem *sky1_rcsu_reg;
+
+	/** @pm_domain_devs: PM domain device instances for devices with more than one PM domain. */
+	struct device *pm_domain_devs[2];
+
+	/** @pm_domain_links: PM domain device links for devices with more than one PM domain. */
+	struct device_link *pm_domain_links[2];
+
+	/** @gpu_reset: Reset control for GPU. */
+	struct reset_control *gpu_reset;
+
 	/** @clks: GPU clocks. */
 	struct {
 		/** @core: Core clock. */
@@ -109,6 +121,9 @@ struct panthor_device {
 
 		/** @coregroup: Core group clock. This clock is optional. */
 		struct clk *coregroup;
+
+		/** @backup: Sky1 backup clocks. These clocks are optional. */
+		struct clk *backup[2];
 	} clks;
 
 	/** @coherent: True if the CPU/GPU are memory coherent. */

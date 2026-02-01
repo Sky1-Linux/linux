@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0 or MIT
 /* Copyright 2025 ARM Limited. All rights reserved. */
 
+#include <linux/of.h>
+
 #include "panthor_device.h"
 #include "panthor_hw.h"
 #include "panthor_regs.h"
@@ -62,6 +64,7 @@ static void panthor_gpu_info_init(struct panthor_device *ptdev)
 {
 	unsigned int i;
 
+	drm_info(&ptdev->base, "panthor: reading GPU_ID register...\n");
 	ptdev->gpu_info.gpu_id = gpu_read(ptdev, GPU_ID);
 	ptdev->gpu_info.csf_id = gpu_read(ptdev, GPU_CSF_ID);
 	ptdev->gpu_info.gpu_rev = gpu_read(ptdev, GPU_REVID);
@@ -83,6 +86,19 @@ static void panthor_gpu_info_init(struct panthor_device *ptdev)
 	ptdev->gpu_info.shader_present = gpu_read64(ptdev, GPU_SHADER_PRESENT);
 	ptdev->gpu_info.tiler_present = gpu_read64(ptdev, GPU_TILER_PRESENT);
 	ptdev->gpu_info.l2_present = gpu_read64(ptdev, GPU_L2_PRESENT);
+
+	/* On CIX Sky1 SoC some shader cores can be disabled via RCSU */
+	if (of_device_is_compatible(ptdev->base.dev->of_node, "arm,mali-valhall") &&
+	    ptdev->sky1_rcsu_reg) {
+		u32 sky1_harvesting_reg_val = readl(ptdev->sky1_rcsu_reg + 0x304);
+		u64 sky1_harvesting_core_mask = ~((sky1_harvesting_reg_val & 0xFFFFFF0) >> 4) & 0x550555;
+
+		ptdev->gpu_info.shader_present &= sky1_harvesting_core_mask;
+
+		drm_info(&ptdev->base,
+			 "sky1_harvesting_reg_val=0x%0x sky1_harvesting_core_mask=0x%0llx",
+			 sky1_harvesting_reg_val, sky1_harvesting_core_mask);
+	}
 
 	/* Introduced in arch 11.x */
 	ptdev->gpu_info.gpu_features = gpu_read64(ptdev, GPU_FEATURES);
