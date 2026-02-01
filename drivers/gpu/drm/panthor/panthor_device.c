@@ -329,13 +329,13 @@ int panthor_device_init(struct panthor_device *ptdev)
 	if (ret)
 		return ret;
 
-	ret = panthor_devfreq_init(ptdev);
-	if (ret)
-		return ret;
-
 	ret = panthor_pm_domain_init(ptdev);
 	if (ret)
 		return ret;
+
+	ret = panthor_devfreq_init(ptdev);
+	if (ret)
+		goto err_release_pm_domains;
 
 	ret = panthor_resets_init(ptdev);
 	if (ret)
