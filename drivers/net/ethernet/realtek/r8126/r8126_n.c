@@ -13367,9 +13367,11 @@ rtl8126_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats)
 
         /*
          * Fetch additional counter values missing in stats collected by driver
-         * from tally counters.
+         * from tally counters.  Skip if device is shutting down to avoid MMIO
+         * to a powered-down PCIe endpoint (causes ARM SError on shutdown).
          */
-        rtl8126_dump_tally_counter(tp, paddr);
+        if (!test_bit(R8126_FLAG_DOWN, tp->task_flags))
+                rtl8126_dump_tally_counter(tp, paddr);
 
         stats->tx_errors = le64_to_cpu(counters->tx_errors);
         stats->collisions = le32_to_cpu(counters->tx_multi_collision);
