@@ -18,8 +18,9 @@
 
 /*
  * Local Management Registers
+ * NOTE: Sky1 uses offset 0x1000 (IP_REG_BANK_BASE in vendor kernel)
  */
-#define CDNS_PCIE_LM_BASE	0x00100000
+#define CDNS_PCIE_LM_BASE	0x1000
 
 /* Vendor ID Register */
 #define CDNS_PCIE_LM_ID		(CDNS_PCIE_LM_BASE + 0x0044)
@@ -133,43 +134,48 @@
 
 /*
  * Root Port Registers (PCI configuration space for the root port function)
+ * NOTE: Sky1 uses offset 0x0, not 0x200000 like standard Cadence IP.
+ * The vendor kernel sets this to 0 for Sky1 compatibility.
  */
-#define CDNS_PCIE_RP_BASE	0x00200000
+#define CDNS_PCIE_RP_BASE	0x0
 #define CDNS_PCIE_RP_CAP_OFFSET 0xc0
 
 /*
  * Address Translation Registers
+ * NOTE: Sky1 uses vendor-specific Cadence IP with different register layout.
+ * AXI Slave base: 0x9000, AXI Master base: 0xb000
+ * Outbound regions start at 0x9000 + 0x1000 = 0xa000, stride 0x80
  */
-#define CDNS_PCIE_AT_BASE	0x00400000
+#define CDNS_PCIE_AT_BASE		0x9000
+#define CDNS_PCIE_AXI_SLAVE_OFFSET	0x9000
+#define CDNS_PCIE_AXI_MASTER_OFFSET	0xb000
 
-/* Region r Outbound AXI to PCIe Address Translation Register 0 */
-#define CDNS_PCIE_AT_OB_REGION_PCI_ADDR0(r) \
-	(CDNS_PCIE_AT_BASE + 0x0000 + ((r) & 0x1f) * 0x0020)
-#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_NBITS_MASK	GENMASK(5, 0)
-#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_NBITS(nbits) \
-	(((nbits) - 1) & CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_NBITS_MASK)
-#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_DEVFN_MASK	GENMASK(19, 12)
-#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_DEVFN(devfn) \
-	(((devfn) << 12) & CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_DEVFN_MASK)
-#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_BUS_MASK	GENMASK(27, 20)
-#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_BUS(bus) \
-	(((bus) << 20) & CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_BUS_MASK)
+/* Region r AXI Region Base Address Register 0 (CPU address) */
+#define CDNS_PCIE_AT_OB_REGION_CPU_ADDR0(r) \
+	(CDNS_PCIE_AXI_SLAVE_OFFSET + 0x1000 + ((r) & 0x1f) * 0x0080)
+#define  CDNS_PCIE_AT_OB_REGION_CPU_ADDR0_NBITS_MASK	GENMASK(5, 0)
+#define  CDNS_PCIE_AT_OB_REGION_CPU_ADDR0_NBITS(nbits) \
+	(((nbits) - 1) & CDNS_PCIE_AT_OB_REGION_CPU_ADDR0_NBITS_MASK)
 
-/* Region r Outbound AXI to PCIe Address Translation Register 1 */
-#define CDNS_PCIE_AT_OB_REGION_PCI_ADDR1(r) \
-	(CDNS_PCIE_AT_BASE + 0x0004 + ((r) & 0x1f) * 0x0020)
+/* Region r AXI Region Base Address Register 1 */
+#define CDNS_PCIE_AT_OB_REGION_CPU_ADDR1(r) \
+	(CDNS_PCIE_AXI_SLAVE_OFFSET + 0x1004 + ((r) & 0x1f) * 0x0080)
 
 /* Region r Outbound PCIe Descriptor Register 0 */
 #define CDNS_PCIE_AT_OB_REGION_DESC0(r) \
-	(CDNS_PCIE_AT_BASE + 0x0008 + ((r) & 0x1f) * 0x0020)
-#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MASK		GENMASK(3, 0)
-#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MEM		0x2
-#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_IO		0x6
-#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_CONF_TYPE0	0xa
-#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_CONF_TYPE1	0xb
-#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_NORMAL_MSG	0xc
-#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_VENDOR_MSG	0xd
-/* Bit 23 MUST be set in RC mode. */
+	(CDNS_PCIE_AXI_SLAVE_OFFSET + 0x1008 + ((r) & 0x1f) * 0x0080)
+#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MASK		GENMASK(28, 24)
+#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MEM		\
+	((0x0 << 24) & CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MASK)
+#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_IO		\
+	((0x2 << 24) & CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MASK)
+#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_CONF_TYPE0	\
+	((0x4 << 24) & CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MASK)
+#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_CONF_TYPE1	\
+	((0x5 << 24) & CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MASK)
+#define  CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_NORMAL_MSG	\
+	((0x10 << 24) & CDNS_PCIE_AT_OB_REGION_DESC0_TYPE_MASK)
+/* Bit 23 MUST be set in RC mode - not used in Sky1 vendor layout */
 #define  CDNS_PCIE_AT_OB_REGION_DESC0_HARDCODED_RID	BIT(23)
 #define  CDNS_PCIE_AT_OB_REGION_DESC0_DEVFN_MASK	GENMASK(31, 24)
 #define  CDNS_PCIE_AT_OB_REGION_DESC0_DEVFN(devfn) \
@@ -177,33 +183,48 @@
 
 /* Region r Outbound PCIe Descriptor Register 1 */
 #define CDNS_PCIE_AT_OB_REGION_DESC1(r)	\
-	(CDNS_PCIE_AT_BASE + 0x000c + ((r) & 0x1f) * 0x0020)
-#define  CDNS_PCIE_AT_OB_REGION_DESC1_BUS_MASK	GENMASK(7, 0)
+	(CDNS_PCIE_AXI_SLAVE_OFFSET + 0x100c + ((r) & 0x1f) * 0x0080)
+#define  CDNS_PCIE_AT_OB_REGION_DESC1_BUS_MASK	GENMASK(31, 24)
 #define  CDNS_PCIE_AT_OB_REGION_DESC1_BUS(bus) \
-	((bus) & CDNS_PCIE_AT_OB_REGION_DESC1_BUS_MASK)
+	(((bus) << 24) & CDNS_PCIE_AT_OB_REGION_DESC1_BUS_MASK)
+#define  CDNS_PCIE_AT_OB_REGION_DESC1_DEVFN_MASK	GENMASK(23, 16)
+#define  CDNS_PCIE_AT_OB_REGION_DESC1_DEVFN(devfn) \
+	(((devfn) << 16) & CDNS_PCIE_AT_OB_REGION_DESC1_DEVFN_MASK)
 
-/* Region r AXI Region Base Address Register 0 */
-#define CDNS_PCIE_AT_OB_REGION_CPU_ADDR0(r) \
-	(CDNS_PCIE_AT_BASE + 0x0018 + ((r) & 0x1f) * 0x0020)
-#define  CDNS_PCIE_AT_OB_REGION_CPU_ADDR0_NBITS_MASK	GENMASK(5, 0)
-#define  CDNS_PCIE_AT_OB_REGION_CPU_ADDR0_NBITS(nbits) \
-	(((nbits) - 1) & CDNS_PCIE_AT_OB_REGION_CPU_ADDR0_NBITS_MASK)
+/* Region r Outbound AXI to PCIe Address Translation Register 0 (PCI address) */
+#define CDNS_PCIE_AT_OB_REGION_PCI_ADDR0(r) \
+	(CDNS_PCIE_AXI_SLAVE_OFFSET + 0x1010 + ((r) & 0x1f) * 0x0080)
+#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_NBITS_MASK	GENMASK(5, 0)
+#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_NBITS(nbits) \
+	(((nbits) - 1) & CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_NBITS_MASK)
+#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_DEVFN_MASK	GENMASK(23, 16)
+#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_DEVFN(devfn) \
+	(((devfn) << 16) & CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_DEVFN_MASK)
+#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_BUS_MASK	GENMASK(31, 24)
+#define  CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_BUS(bus) \
+	(((bus) << 24) & CDNS_PCIE_AT_OB_REGION_PCI_ADDR0_BUS_MASK)
 
-/* Region r AXI Region Base Address Register 1 */
-#define CDNS_PCIE_AT_OB_REGION_CPU_ADDR1(r) \
-	(CDNS_PCIE_AT_BASE + 0x001c + ((r) & 0x1f) * 0x0020)
+/* Region r Outbound AXI to PCIe Address Translation Register 1 */
+#define CDNS_PCIE_AT_OB_REGION_PCI_ADDR1(r) \
+	(CDNS_PCIE_AXI_SLAVE_OFFSET + 0x1014 + ((r) & 0x1f) * 0x0080)
+
+/* Region r Outbound Control Register 0 */
+#define CDNS_PCIE_AT_OB_REGION_CTRL0(r)	\
+	(CDNS_PCIE_AXI_SLAVE_OFFSET + 0x1018 + ((r) & 0x1f) * 0x0080)
+#define CDNS_PCIE_AT_OB_REGION_CTRL0_SUPPLY_BUS		BIT(26)
+#define CDNS_PCIE_AT_OB_REGION_CTRL0_SUPPLY_DEV_FN	BIT(25)
 
 /* Root Port BAR Inbound PCIe to AXI Address Translation Register */
 #define CDNS_PCIE_AT_IB_RP_BAR_ADDR0(bar) \
-	(CDNS_PCIE_AT_BASE + 0x0800 + (bar) * 0x0008)
+	(CDNS_PCIE_AXI_MASTER_OFFSET + 0x0 + (bar) * 0x0008)
 #define  CDNS_PCIE_AT_IB_RP_BAR_ADDR0_NBITS_MASK	GENMASK(5, 0)
 #define  CDNS_PCIE_AT_IB_RP_BAR_ADDR0_NBITS(nbits) \
 	(((nbits) - 1) & CDNS_PCIE_AT_IB_RP_BAR_ADDR0_NBITS_MASK)
 #define CDNS_PCIE_AT_IB_RP_BAR_ADDR1(bar) \
-	(CDNS_PCIE_AT_BASE + 0x0804 + (bar) * 0x0008)
+	(CDNS_PCIE_AXI_MASTER_OFFSET + 0x4 + (bar) * 0x0008)
 
 /* AXI link down register */
-#define CDNS_PCIE_AT_LINKDOWN (CDNS_PCIE_AT_BASE + 0x0824)
+#define CDNS_PCIE_AT_LINKDOWN (CDNS_PCIE_AXI_SLAVE_OFFSET + 0x0004)
 
 /* LTSSM Capabilities register */
 #define CDNS_PCIE_LTSSM_CONTROL_CAP             (CDNS_PCIE_LM_BASE + 0x0054)
@@ -230,9 +251,9 @@ struct cdns_pcie_rp_ib_bar {
 
 /* Endpoint Function BAR Inbound PCIe to AXI Address Translation Register */
 #define CDNS_PCIE_AT_IB_EP_FUNC_BAR_ADDR0(fn, bar) \
-	(CDNS_PCIE_AT_BASE + 0x0840 + (fn) * 0x0040 + (bar) * 0x0008)
+	(CDNS_PCIE_AXI_MASTER_OFFSET + 0x0 + (fn) * 0x0040 + (bar) * 0x0008)
 #define CDNS_PCIE_AT_IB_EP_FUNC_BAR_ADDR1(fn, bar) \
-	(CDNS_PCIE_AT_BASE + 0x0844 + (fn) * 0x0040 + (bar) * 0x0008)
+	(CDNS_PCIE_AXI_MASTER_OFFSET + 0x4 + (fn) * 0x0040 + (bar) * 0x0008)
 
 /* Normal/Vendor specific message access: offset inside some outbound region */
 #define CDNS_PCIE_NORMAL_MSG_ROUTING_MASK	GENMASK(7, 5)
@@ -256,6 +277,7 @@ struct cdns_pcie_ops {
  * struct cdns_pcie - private data for Cadence PCIe controller drivers
  * @reg_base: IO mapped register base
  * @mem_res: start/end offsets in the physical system memory to map PCI accesses
+ * @msg_res: start/end offsets for PCIe msg region (optional, for ATU region 1)
  * @dev: PCIe controller
  * @is_rc: tell whether the PCIe controller mode is Root Complex or Endpoint.
  * @phy_count: number of supported PHY devices
@@ -267,6 +289,7 @@ struct cdns_pcie_ops {
 struct cdns_pcie {
 	void __iomem		*reg_base;
 	struct resource		*mem_res;
+	struct resource		*msg_res;
 	struct device		*dev;
 	bool			is_rc;
 	int			phy_count;
@@ -298,6 +321,7 @@ struct cdns_pcie_rc {
 	bool			avail_ib_bar[CDNS_PCIE_RP_MAX_IB];
 	unsigned int		quirk_retrain_flag:1;
 	unsigned int		quirk_detect_quiet_flag:1;
+	unsigned int		ecam_support_flag:1;
 };
 
 /**
