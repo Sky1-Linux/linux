@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: GPL-2.0-only
+
+config CIX_SKY1_SOCINFO
+	tristate "CIX Sky1 SoC information driver"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on NVMEM
+	default ARCH_CIX
+	help
+	  Say yes here to enable support for the CIX Sky1 SoC information
+	  driver. This provides SoC identification, firmware version
+	  information, and board details via sysfs.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called sky1-socinfo.
+
+config CIX_DDR_LP
+	tristate "CIX DDR Low Power control driver"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on HAVE_ARM_SMCCC
+	default ARCH_CIX
+	help
+	  Say yes here to enable support for the CIX DDR low power control
+	  driver. This allows enabling/disabling DDR self-refresh and power-down
+	  states via SMC calls to TF-A firmware.
+
+	  The driver exposes a sysfs interface at /sys/devices/.../on to control
+	  DDR low power mode (1=enabled, 0=disabled).
+
+	  This driver can also be built as a module. If so, the module
+	  will be called cix-ddr-lp.
+
+config CIX_BUS_PERF
+	tristate "CIX Bus Performance State Control driver"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on PM_GENERIC_DOMAINS
+	depends on PM_OPP
+	default ARCH_CIX
+	help
+	  Say yes here to enable support for the CIX CI700/NI700 bus frequency
+	  control driver. This allows controlling memory interconnect frequency
+	  via SCMI performance domains.
+
+	  The driver exposes a sysfs interface for setting bus frequency.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called cix-bus-perf.

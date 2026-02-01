@@ -364,6 +364,17 @@ config NVMEM_SPMI_SDAM
 	  Qualcomm Technologies, Inc. PMICs. It provides the clients
 	  an interface to read/write to the SDAM module's shared memory.
 
+config NVMEM_SKY1
+	tristate "CIX Sky1 eFuse support"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on HAVE_ARM_SMCCC
+	help
+	  This driver provides read support for the eFuse on CIX Sky1 SoCs.
+	  The efuse data is accessed via ARM SMCCC firmware calls.
+
+	  This driver can also be built as a module. If so, the module
+	  will be called nvmem-sky1.
+
 config NVMEM_SPRD_EFUSE
 	tristate "Spreadtrum SoC eFuse Support"
 	depends on ARCH_SPRD || COMPILE_TEST
