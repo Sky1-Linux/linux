@@ -4,8 +4,8 @@
 #include <linux/clk.h>
 #include <linux/devfreq.h>
 #include <linux/devfreq_cooling.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
-#include <linux/pm_domain.h>
 #include <linux/pm_opp.h>
 
 #include <drm/drm_managed.h>
@@ -29,12 +29,11 @@ struct panthor_devfreq {
 	 *
 	 * On platforms with a named "perf" power domain (e.g. SCMI DVFS),
 	 * frequency changes must go through this virtual device rather than
-	 * the main GPU device. NULL if not using SCMI perf domain.
+	 * the main GPU device, so the OPP framework routes through the SCMI
+	 * performance state (which manages both frequency and voltage).
+	 * NULL if not using SCMI perf domain.
 	 */
 	struct device *opp_dev;
-
-	/** @opp_dl: Device link to the SCMI perf domain virtual device. */
-	struct device_link *opp_dl;
 
 	/** @busy_time: Busy time. */
 	ktime_t busy_time;
@@ -148,32 +147,17 @@ static struct devfreq_dev_profile panthor_devfreq_profile = {
 	.get_cur_freq = panthor_devfreq_get_cur_freq,
 };
 
-static void panthor_devfreq_scmi_cleanup(struct drm_device *ddev, void *data)
-{
-	struct panthor_devfreq *pdevfreq = data;
-
-	dev_pm_opp_remove_table(ddev->dev);
-
-	if (pdevfreq->opp_dl) {
-		device_link_del(pdevfreq->opp_dl);
-		pdevfreq->opp_dl = NULL;
-	}
-
-	if (pdevfreq->opp_dev) {
-		dev_pm_domain_detach(pdevfreq->opp_dev, true);
-		pdevfreq->opp_dev = NULL;
-	}
-}
-
 /**
  * panthor_devfreq_scmi_init() - Try to set up DVFS via SCMI perf domain.
  * @ptdev: Panthor device
  * @pdevfreq: Panthor devfreq state
  *
  * On platforms with multiple power domains (e.g. Sky1 with pd_gpu + perf),
- * the SCMI perf domain is not auto-attached by the platform bus. Explicitly
- * attach to the named "perf" domain, read the firmware-provided OPP table,
- * and copy it to the main device for devfreq use.
+ * panthor_pm_domain_init() has already created virtual devices for each domain.
+ * Find the "perf" domain's virtual device, read the firmware-provided OPP
+ * table from it, and copy OPPs to the main device for devfreq use. Frequency
+ * changes will be routed through the virtual device so the SCMI firmware can
+ * manage both frequency and voltage.
  *
  * Return: number of OPPs added, 0 if no perf domain found, negative on error.
  */
@@ -182,30 +166,24 @@ static int panthor_devfreq_scmi_init(struct panthor_device *ptdev,
 {
 	struct device *dev = ptdev->base.dev;
 	struct device *opp_dev;
-	struct device_link *opp_dl;
 	struct dev_pm_opp *opp;
 	unsigned long freq;
-	int count, i, ret;
+	int index, count, i, ret;
 
-	opp_dev = dev_pm_domain_attach_by_name(dev, "perf");
-	if (IS_ERR_OR_NULL(opp_dev))
+	/* Find "perf" power domain index from DT */
+	index = of_property_match_string(dev->of_node,
+					 "power-domain-names", "perf");
+	if (index < 0 || index >= ARRAY_SIZE(ptdev->pm_domain_devs))
 		return 0;
 
-	opp_dl = device_link_add(dev, opp_dev,
-				 DL_FLAG_RPM_ACTIVE |
-				 DL_FLAG_PM_RUNTIME |
-				 DL_FLAG_STATELESS);
-	if (!opp_dl) {
-		dev_pm_domain_detach(opp_dev, true);
+	opp_dev = ptdev->pm_domain_devs[index];
+	if (!opp_dev)
 		return 0;
-	}
 
+	/* SCMI attach_dev callback already populated OPPs on the virtual device */
 	count = dev_pm_opp_get_opp_count(opp_dev);
-	if (count <= 0) {
-		device_link_del(opp_dl);
-		dev_pm_domain_detach(opp_dev, true);
+	if (count <= 0)
 		return 0;
-	}
 
 	/* Copy OPPs from the perf domain virtual device to the main device */
 	for (i = 0, freq = 0; ; i++, freq++) {
@@ -222,19 +200,10 @@ static int panthor_devfreq_scmi_init(struct panthor_device *ptdev,
 		}
 	}
 
-	if (i == 0) {
-		device_link_del(opp_dl);
-		dev_pm_domain_detach(opp_dev, true);
+	if (i == 0)
 		return 0;
-	}
 
 	pdevfreq->opp_dev = opp_dev;
-	pdevfreq->opp_dl = opp_dl;
-
-	ret = drmm_add_action_or_reset(&ptdev->base,
-				       panthor_devfreq_scmi_cleanup, pdevfreq);
-	if (ret)
-		return ret;
 
 	drm_info(&ptdev->base,
 		 "GPU DVFS: %d OPPs from SCMI perf domain\n", i);
