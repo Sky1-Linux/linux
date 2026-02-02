@@ -204,6 +204,34 @@
 		shutdown-gpios = <&s5_gpio0 19 GPIO_ACTIVE_HIGH>;
 	};
 
+	gpio-leds {
+		compatible = "gpio-leds";
+
+		power-led {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pwr_led_gpio>;
+			gpios = <&s5_gpio1 0 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+			default-state = "on";
+		};
+
+		state-led {
+			pinctrl-names = "default";
+			pinctrl-0 = <&state_led_gpio>;
+			gpios = <&s5_gpio0 7 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+			default-state = "on";
+		};
+
+		ssd-led {
+			pinctrl-names = "default";
+			pinctrl-0 = <&ssd_led_gpio>;
+			gpios = <&s5_gpio1 1 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "disk-activity";
+			default-state = "off";
+		};
+	};
+
 	vgfx_power: vgfx-power {
 		compatible = "regulator-fixed";
 		regulator-name = "vgfx_power";
@@ -335,6 +363,24 @@
 	wlan_radio_gpio: wlan_radio_gpio {
 		sky1,pins = <
 			CIX_PAD_GPIO019_FUNC_GPIO019 (PULL_UP|ST|DS_LEVEL7) /* GPIO0-19 */
+		>;
+	};
+
+	pwr_led_gpio: pwr_led_gpio {
+		sky1,pins = <
+			CIX_PAD_SFI_GPIO0_FUNC_GPIO015 (PULL_UP|DS_LEVEL4) /* GPIO015 - S5_gpio1 0 */
+		>;
+	};
+
+	ssd_led_gpio: ssd_led_gpio {
+		sky1,pins = <
+			CIX_PAD_SFI_GPIO1_FUNC_GPIO016 (PULL_UP|DS_LEVEL4) /* GPIO016 - S5_gpio1 1 */
+		>;
+	};
+
+	state_led_gpio: state_led_gpio {
+		sky1,pins = <
+			CIX_PAD_GPIO008_FUNC_GPIO008 (PULL_UP|DS_LEVEL4) /* GPIO008 - S5_gpio0 7 */
 		>;
 	};
 
