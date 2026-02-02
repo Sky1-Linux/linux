@@ -1444,6 +1444,7 @@
 				clock-names = "sysclk", "clk48m";
 				resets = <&audss_rst AUDSS_HDA_SW_RST_N>;
 				reset-names = "hda";
+				#sound-dai-cells = <0>;
 				status = "disabled";
 			};
 		};
