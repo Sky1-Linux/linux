@@ -194,10 +194,14 @@
 
 	wireless_bluetooth: wireless-bluetooth {
 		compatible = "bluetooth-platdata";
-		pinctrl-names = "default";
-		pinctrl-0 = <&bt_reset_gpio>;
-		BT,reset-gpios = <&s5_gpio0 19 GPIO_ACTIVE_HIGH>;
 		status = "okay";
+	};
+
+	wlan_rfkill: wlan-rfkill {
+		compatible = "rfkill-gpio";
+		label = "wlan-rfkill";
+		radio-type = "wlan";
+		shutdown-gpios = <&s5_gpio0 19 GPIO_ACTIVE_HIGH>;
 	};
 
 	vgfx_power: vgfx-power {
@@ -328,7 +332,7 @@
 		>;
 	};
 
-	bt_reset_gpio: bt_reset_gpio {
+	wlan_radio_gpio: wlan_radio_gpio {
 		sky1,pins = <
 			CIX_PAD_GPIO019_FUNC_GPIO019 (PULL_UP|ST|DS_LEVEL7) /* GPIO0-19 */
 		>;
@@ -2113,7 +2117,7 @@
 /* M.2 E-Key (WiFi) */
 &pcie_x2_rc {
 	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_pcie_x2_rc>;
+	pinctrl-0 = <&pinctrl_pcie_x2_rc>, <&wlan_radio_gpio>;
 	reset-gpios = <&s5_gpio0 4 GPIO_ACTIVE_HIGH>;
 	vcc-pcie-supply = <&vdd_3v3_pcie>;
 	status = "okay";
