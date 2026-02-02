@@ -336,16 +336,18 @@
 
 	gpio-leds {
 		compatible = "gpio-leds";
-		pinctrl-names = "default";
-		status = "okay";
 
 		power-led {
+			pinctrl-names = "default";
+			pinctrl-0 = <&pwr_led_gpio>;
 			gpios = <&s5_gpio2 0 GPIO_ACTIVE_HIGH>;
 			linux,default-trigger = "default-on";
 			default-state = "on";
 		};
 
 		status-led {
+			pinctrl-names = "default";
+			pinctrl-0 = <&state_led_gpio>;
 			gpios = <&s5_gpio0 7 GPIO_ACTIVE_LOW>;
 			linux,default-trigger = "heartbeat";
 			default-state = "on";
@@ -407,7 +409,7 @@
 
 	vgfx_poweren_gpio: vgfx_poweren_gpio {
 		sky1,pins = <
-			CIX_PAD_GPIO018_FUNC_GPIO018 (PULL_UP|DS_LEVEL4) /* GPIO0-01 */
+			CIX_PAD_GPIO018_FUNC_GPIO018 (PULL_UP|DS_LEVEL4) /* GPIO018 - S5_gpio0 0 */
 		>;
 	};
 
@@ -603,6 +605,18 @@
 		>;
 	};
 
+	pwr_led_gpio: pwr_led_gpio {
+		sky1,pins = <
+			CIX_PAD_SFI_GPIO0_FUNC_SFI_GPIO0 (PULL_UP|DS_LEVEL4) /* SFI_GPIO0 - S5_gpio2 0 */
+		>;
+	};
+
+	state_led_gpio: state_led_gpio {
+		sky1,pins = <
+			CIX_PAD_GPIO008_FUNC_GPIO008 (PULL_UP|DS_LEVEL4) /* GPIO008 - S5_gpio0 7 */
+		>;
+	};
+
 	user_led: user_led {
 		sky1,pins = <
 			CIX_PAD_GPIO021_FUNC_SFI_GPIO6 (PULL_UP|DS_LEVEL4) /* GPIO021 - S5_gpio2 6 */
@@ -617,7 +631,7 @@
 
 	usbc0_gpio: usbc0_gpio {
 		sky1,pins = <
-			CIX_PAD_GPIO007_FUNC_GPIO007 (PULL_UP|DS_LEVEL4) /* GPIO009 - S5_gpio0 8 */
+			CIX_PAD_GPIO007_FUNC_GPIO007 (PULL_UP|DS_LEVEL4) /* GPIO007 - S5_gpio0 6 */
 		>;
 	};
 };
