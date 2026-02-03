@@ -17,6 +17,7 @@
 //------------------------------------------------------------------------------
 
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_bridge.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <drm/drm_edid.h>
@@ -1150,8 +1151,23 @@ int trilin_dp_drm_init(struct trilin_dpsub *dpsub)
 	drm_encoder_helper_add(encoder, &trilin_dp_encoder_helper_funcs);
 
 	connector->polled = DRM_CONNECTOR_POLL_HPD;
-	if (dp->edp_panel)
+	if (dp->edp_panel) {
 		drm_mode_connector = DRM_MODE_CONNECTOR_eDP;
+	} else if (dp->next_bridge) {
+		ret = drm_bridge_attach(encoder, dp->next_bridge, NULL,
+					DRM_BRIDGE_ATTACH_NO_CONNECTOR);
+		if (!ret) {
+			/* Walk chain to terminal bridge for connector type */
+			struct drm_bridge *b;
+
+			for (b = dp->next_bridge;
+			     drm_bridge_get_next_bridge(b);
+			     b = drm_bridge_get_next_bridge(b))
+				;
+			if (b->type)
+				drm_mode_connector = b->type;
+		}
+	}
 
 	ret = drm_connector_init(encoder->dev, connector,
 				 &trilin_dp_connector_funcs,

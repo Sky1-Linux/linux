@@ -16,6 +16,7 @@
 //	along with this program. If not, see <http://www.gnu.org/licenses/>.
 //------------------------------------------------------------------------------
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_bridge.h>
 #include <drm/drm_device.h>
 //#include <drm/display/drm_dp_helper.h>
 #include <drm/drm_of.h>
@@ -158,6 +159,19 @@ static int trilin_dptx_cix_bind(struct device *comp, struct device *master,
 	ret = trilin_dp_probe(dpsub, drm);
 	if (ret)
 		return ret;
+
+	/* Look for downstream bridge on output port (port 2) */
+	{
+		struct drm_bridge *bridge;
+
+		bridge = devm_drm_of_get_bridge(comp, comp->of_node, 2, 0);
+		if (IS_ERR(bridge)) {
+			if (PTR_ERR(bridge) == -EPROBE_DEFER)
+				return -EPROBE_DEFER;
+			bridge = NULL;
+		}
+		dpsub->dp->next_bridge = bridge;
+	}
 
 	ret = trilin_dp_drm_init(dpsub);
 	if (ret)
