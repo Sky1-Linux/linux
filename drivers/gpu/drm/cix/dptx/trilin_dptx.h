@@ -422,6 +422,7 @@ struct trilin_dp {
 	struct trilin_encoder encoder; //for sst
 	struct trilin_connector connector; //for sst
 	struct drm_panel *edp_panel;
+	struct drm_bridge *next_bridge;
 	struct device *dev;
 	struct trilin_dpsub *dpsub;
 	struct drm_device **drm;

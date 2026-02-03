@@ -235,6 +235,54 @@
 		status = "okay";
 	};
 
+	ps185_pdb: regulator-ps185-pdb {
+		compatible = "regulator-fixed";
+		regulator-name = "PS185_PDB";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_dp_to_hdmi_ps185>;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&fch_gpio0 31 GPIO_ACTIVE_LOW>;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	ps185: dp-to-hdmi-bridge {
+		compatible = "parade,ps185hdm";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				ps185_in: endpoint {
+					remote-endpoint = <&dp4_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				ps185_out: endpoint {
+					remote-endpoint = <&hdmi_con_in>;
+				};
+			};
+		};
+	};
+
+	hdmi_connector: hdmi-connector {
+		compatible = "hdmi-connector";
+		type = "a";
+
+		port {
+			hdmi_con_in: endpoint {
+				remote-endpoint = <&ps185_out>;
+			};
+		};
+	};
+
 /*	gpio-leds {
 		compatible = "gpio-leds";
 		pinctrl-names = "default";
@@ -1129,11 +1177,6 @@
 &dp4 {
 	status = "okay";
 	cix,dp-max-rate = <540000>;
-	dp_to_hdmi = "yes";
-	side_by_side_master = <0>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_dp_to_hdmi_ps185>;
-	pdb-gpios = <&fch_gpio0 31 GPIO_ACTIVE_LOW>;
 
 	ports {
 		#address-cells = <1>;
@@ -1152,6 +1195,14 @@
 
 			dp4_1_in: endpoint {
 				remote-endpoint = <&dpu4_pipe1_out>;
+			};
+		};
+
+		port@2 {
+			reg = <2>;
+
+			dp4_out: endpoint {
+				remote-endpoint = <&ps185_in>;
 			};
 		};
 	};
