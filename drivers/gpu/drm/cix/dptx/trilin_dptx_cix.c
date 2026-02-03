@@ -122,7 +122,6 @@ static int trilin_dptx_cix_bind(struct device *comp, struct device *master,
 	void *np;
 	const void *match;
 	struct drm_device *drm = master_data;
-	struct trilin_dptx_pdata *pdata;
 	struct trilin_dptx_cix_dev *cix_dptx = dev_get_drvdata(comp);
 	struct drm_encoder *encoder;
 	struct trilin_dpsub *dpsub;
@@ -145,16 +144,10 @@ static int trilin_dptx_cix_bind(struct device *comp, struct device *master,
 	if (!np)
 		return -ENODEV;
 
-	if (has_acpi_companion(comp)) {
+	if (has_acpi_companion(comp))
 		match = acpi_device_get_match_data(comp);
-		pdata = (struct trilin_dptx_pdata *)(((struct acpi_device_id *)
-							      match)
-							     ->driver_data);
-	} else {
+	else
 		match = of_match_node(trilin_dptx_dt_ids, np);
-		pdata = (struct trilin_dptx_pdata
-				 *)(((struct of_device_id *)match)->data);
-	}
 
 	if (unlikely(!match))
 		return -ENODEV;

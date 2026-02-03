@@ -10,6 +10,7 @@
 #include <linux/string.h>
 #include <linux/errno.h>
 #include "cix_hdcp.h"
+#include "cix_hdcp_ioctl.h"
 #include "cix_hdcp_ioctl_cmd.h"
 #include "hdcp2_tx_tmr.h"
 #include "hdcp2_tx_state.h"
