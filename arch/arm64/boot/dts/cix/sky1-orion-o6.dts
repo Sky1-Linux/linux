@@ -1695,7 +1695,7 @@
 		interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
 		id = <0>;
 		reg = <0x30>;
-		status = "disabled"; /* Temporarily disabled - race condition with cdns_role_stop */
+		status = "okay";
 
 		usbc_con0 {
 			data-role = "host";
@@ -1728,7 +1728,7 @@
 		interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
 		id = <2>;
 		reg = <0x31>;
-		status = "disabled"; /* Temporarily disabled - race condition with cdns_role_stop */
+		status = "okay";
 
 		usbc_con2 {
 			data-role = "host";

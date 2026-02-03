@@ -2600,9 +2600,8 @@
 			compatible = "armchina,linlon-d6";
 			reg = <0x0 0x14010000 0x0 0x20000>;
 			interrupts = <GIC_SPI 316 IRQ_TYPE_LEVEL_HIGH 0>;
-			/* IOMMU disabled to avoid ACE errors from stale TLB entries */
-			/* iommus = <&smmu_mmhub 0>, <&smmu_mmhub 1>,
-				 <&smmu_mmhub 3>, <&smmu_mmhub 4>; */
+			iommus = <&smmu_mmhub 0>, <&smmu_mmhub 1>,
+				 <&smmu_mmhub 3>, <&smmu_mmhub 4>;
 			power-domains = <&smc_devpd SKY1_PD_DPU0>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU0_ACLK>;
@@ -2634,9 +2633,8 @@
 			compatible = "armchina,linlon-d6";
 			reg = <0x0 0x14080000 0x0 0x20000>;
 			interrupts = <GIC_SPI 318 IRQ_TYPE_LEVEL_HIGH 0>;
-			/* IOMMU disabled to avoid ACE errors from stale TLB entries */
-			/* iommus = <&smmu_mmhub 6>, <&smmu_mmhub 7>,
-				 <&smmu_mmhub 9>, <&smmu_mmhub 10>; */
+			iommus = <&smmu_mmhub 6>, <&smmu_mmhub 7>,
+				 <&smmu_mmhub 9>, <&smmu_mmhub 10>;
 			power-domains = <&smc_devpd SKY1_PD_DPU1>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU1_ACLK>;
@@ -2668,9 +2666,8 @@
 			compatible = "armchina,linlon-d6";
 			reg = <0x0 0x140f0000 0x0 0x20000>;
 			interrupts = <GIC_SPI 320 IRQ_TYPE_LEVEL_HIGH 0>;
-			/* IOMMU disabled to avoid ACE errors from stale TLB entries */
-			/* iommus = <&smmu_mmhub 12>, <&smmu_mmhub 13>,
-				 <&smmu_mmhub 15>, <&smmu_mmhub 16>; */
+			iommus = <&smmu_mmhub 12>, <&smmu_mmhub 13>,
+				 <&smmu_mmhub 15>, <&smmu_mmhub 16>;
 			power-domains = <&smc_devpd SKY1_PD_DPU2>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU2_ACLK>;
@@ -2702,9 +2699,8 @@
 			compatible = "armchina,linlon-d6";
 			reg = <0x0 0x14160000 0x0 0x20000>;
 			interrupts = <GIC_SPI 322 IRQ_TYPE_LEVEL_HIGH 0>;
-			/* IOMMU disabled to avoid ACE errors from stale TLB entries */
-			/* iommus = <&smmu_mmhub 18>, <&smmu_mmhub 19>,
-				 <&smmu_mmhub 21>, <&smmu_mmhub 22>; */
+			iommus = <&smmu_mmhub 18>, <&smmu_mmhub 19>,
+				 <&smmu_mmhub 21>, <&smmu_mmhub 22>;
 			power-domains = <&smc_devpd SKY1_PD_DPU3>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU3_ACLK>;
@@ -2736,9 +2732,8 @@
 			compatible = "armchina,linlon-d6";
 			reg = <0x0 0x141d0000 0x0 0x20000>;
 			interrupts = <GIC_SPI 324 IRQ_TYPE_LEVEL_HIGH 0>;
-			/* IOMMU disabled to avoid ACE errors from stale TLB entries */
-			/* iommus = <&smmu_mmhub 24>, <&smmu_mmhub 25>,
-				 <&smmu_mmhub 27>, <&smmu_mmhub 28>; */
+			iommus = <&smmu_mmhub 24>, <&smmu_mmhub 25>,
+				 <&smmu_mmhub 27>, <&smmu_mmhub 28>;
 			power-domains = <&smc_devpd SKY1_PD_DPU4>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU4_ACLK>;
