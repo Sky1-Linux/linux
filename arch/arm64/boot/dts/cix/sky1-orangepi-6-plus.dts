@@ -11,7 +11,7 @@
 /delete-node/ &reg_definition;
 / {
 	model = "Orange Pi 6 Plus";
-	compatible = "cix,sky1";
+	compatible = "xunlong,orangepi-6-plus", "cix,sky1";
 
 	chosen {
 		stdout-path = &uart2;

@@ -16,11 +16,13 @@ from pathlib import Path
 BOARD_DTS: dict[str, str] = {
     "radxa,orion-o6": "sky1-orion-o6",
     "radxa,orion-o6n": "sky1-orion-o6n",
+    "xunlong,orangepi-6-plus": "sky1-orangepi-6-plus",
 }
 
 BOARD_DTB_PREFIX: dict[str, str] = {
     "radxa,orion-o6": "SKY1-ORION-O6",
     "radxa,orion-o6n": "SKY1-ORION-O6N",
+    "xunlong,orangepi-6-plus": "SKY1-ORANGEPI-6-PLUS",
 }
 
 # Track configuration
