@@ -1766,71 +1766,7 @@
 	pinctrl-0 = <&pinctrl_fch_i2c1>;
 	clock-frequency = <100000>;
 
-	// rts5453_pd1_port0:rts5453@30 {
-	// 	compatible = "realtek,rts5453h";
-	// 	interrupt-parent = <&s5_gpio0>;
-	// 	interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
-	// 	id = <0>;
-	// 	reg = <0x30>;
-	// 	status = "disabled"; /* Temporarily disabled - race condition with cdns_role_stop */
-
-	// 	usbc_con0 {
-	// 		data-role = "host";
-	// 		power-role = "source";
-	// 		try-power-role = "source";
-	// 		#address-cells = <1>;
-	// 		#size-cells = <0>;
-
-	// 		port@0 {
-	// 			reg = <0>;
-
-	// 			usbc0_role_sw: endpoint {
-	// 				remote-endpoint = <&cdnsp_0_role_switch>;
-	// 			};
-	// 		};
-
-	// 		port@1 {
-	// 			reg = <1>;
-
-	// 			usbc0_phy_sw: endpoint {
-	// 				remote-endpoint = <&usbdpphy0_lane_switch>;
-	// 			};
-	// 		};
-	// 	};
-	// };
-
-	// rts5453_pd1_port1:rts5453@31 {
-	// 	compatible = "realtek,rts5453h";
-	// 	interrupt-parent = <&s5_gpio0>;
-	// 	interrupts = <8 IRQ_TYPE_LEVEL_LOW>;
-	// 	id = <2>;
-	// 	reg = <0x31>;
-	// 	status = "disabled"; /* Temporarily disabled - race condition with cdns_role_stop */
-
-	// 	usbc_con2 {
-	// 		data-role = "host";
-	// 		power-role = "source";
-	// 		try-power-role = "source";
-	// 		#address-cells = <1>;
-	// 		#size-cells = <0>;
-
-	// 		port@0 {
-	// 			reg = <0>;
-
-	// 			usbc2_role_sw: endpoint {
-	// 				remote-endpoint = <&cdnsp_2_role_switch>;
-	// 			};
-	// 		};
-
-	// 		port@1 {
-	// 			reg = <1>;
-
-	// 			usbc2_phy_sw: endpoint {
-	// 				remote-endpoint = <&usbdpphy2_lane_switch>;
-	// 			};
-	// 		};
-	// 	};
-	// };
+	/* O6N has a single USB-C port with PD via CS32G05 on i2c5 */
 };
 
 &i7_isp {
