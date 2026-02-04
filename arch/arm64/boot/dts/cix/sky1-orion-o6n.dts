@@ -1638,6 +1638,7 @@
 
 &usbc_phy3 {
 	status = "okay";
+	default_conf = /bits/ 8 <0x02>;  /* UDPHY_MODE_DP - pure DP output */
 };
 
 &usb3_phy3 {
