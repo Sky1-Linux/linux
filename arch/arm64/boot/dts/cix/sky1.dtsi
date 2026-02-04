@@ -668,6 +668,13 @@
 			<GIC_SPI 80 IRQ_TYPE_EDGE_RISING 0>;
 		interrupt-names = "eventq", "priq", "cmdq-sync", "gerror";
 		dma-coherent;
+		/* Pre-install bypass STEs for PCIe root port and common device SIDs
+		 * to prevent F_TRANSL_FORBIDDEN events during early boot before
+		 * IOMMU domains are attached by device drivers.
+		 */
+		arm,boot-active-sids = <0x0000 0x0100 0x3000 0x3100
+					0x6000 0x6100 0x9000 0x9100
+					0xc000 0xc100>;
 		status = "disabled";
 	};
 
