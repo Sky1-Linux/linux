@@ -458,7 +458,9 @@ static inline unsigned int arm_smmu_cdtab_l2_idx(unsigned int ssid)
 #define EVT_ID_BAD_STREAMID_CONFIG	0x02
 #define EVT_ID_STE_FETCH_FAULT		0x03
 #define EVT_ID_BAD_STE_CONFIG		0x04
+#define EVT_ID_BAD_ATS_TREQ		0x05
 #define EVT_ID_STREAM_DISABLED_FAULT	0x06
+#define EVT_ID_TRANSL_FORBIDDEN		0x07
 #define EVT_ID_BAD_SUBSTREAMID_CONFIG	0x08
 #define EVT_ID_CD_FETCH_FAULT		0x09
 #define EVT_ID_BAD_CD_CONFIG		0x0a
