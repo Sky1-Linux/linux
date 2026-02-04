@@ -496,13 +496,12 @@
 		};
 
 		dpu_gop: dpu_gop@84800000 {
-			reg = <0x0 0x84800000 0x0 0x2000000>;
-			iommu-addresses = <&dpu0 0x0 0x84800000 0x0 0x02000000>,
-				<&dpu1 0x0 0x84800000 0x0 0x02000000>,
-				<&dpu2 0x0 0x84800000 0x0 0x02000000>,
-				<&dpu3 0x0 0x84800000 0x0 0x02000000>,
-				<&dpu4 0x0 0x84800000 0x0 0x02000000>;
-			status = "disabled"; /* not for device dma and cma memory */
+			reg = <0x0 0x84800000 0x0 0x800000>;
+			iommu-addresses = <&dpu0 0x0 0x84800000 0x0 0x800000>,
+				<&dpu1 0x0 0x84800000 0x0 0x800000>,
+				<&dpu2 0x0 0x84800000 0x0 0x800000>,
+				<&dpu3 0x0 0x84800000 0x0 0x800000>,
+				<&dpu4 0x0 0x84800000 0x0 0x800000>;
 			no-map;
 		};
 
@@ -553,9 +552,11 @@
 			no-map;
 		};
 
+		/* Disabled: overlaps dpu_gop@84800000 and SFH is unused */
 		sfh_sharebuffer: sfh_sharebuffer@84800000 {
 			reg = <0x0 0x84800000 0x0 0x800000>; /* 8M for IPC */
 			no-map;
+			status = "disabled";
 		};
 
 		sfh_ram: ram0@1ca0000000 {	/* 512KB RAM */
@@ -2612,7 +2613,8 @@
 			reg = <0x0 0x14010000 0x0 0x20000>;
 			interrupts = <GIC_SPI 316 IRQ_TYPE_LEVEL_HIGH 0>;
 			iommus = <&smmu_mmhub 0>, <&smmu_mmhub 1>,
-				 <&smmu_mmhub 3>, <&smmu_mmhub 4>;
+				 <&smmu_mmhub 3>, <&smmu_mmhub 4>,
+				 <&smmu_mmhub 5>;
 			power-domains = <&smc_devpd SKY1_PD_DPU0>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU0_ACLK>;
@@ -2620,7 +2622,6 @@
 			resets = <&src SKY1_DPU0_RCSU_RESET_N>,
 					<&src SKY1_DPU_RESET0_N>;
 			reset-names = "rcsu_reset", "ip_reset";
-			memory-region = <&dpu_gop>;
 			enabled_by_gop = <0>;
 			status = "disabled";
 
@@ -2645,7 +2646,8 @@
 			reg = <0x0 0x14080000 0x0 0x20000>;
 			interrupts = <GIC_SPI 318 IRQ_TYPE_LEVEL_HIGH 0>;
 			iommus = <&smmu_mmhub 6>, <&smmu_mmhub 7>,
-				 <&smmu_mmhub 9>, <&smmu_mmhub 10>;
+				 <&smmu_mmhub 9>, <&smmu_mmhub 10>,
+				 <&smmu_mmhub 11>;
 			power-domains = <&smc_devpd SKY1_PD_DPU1>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU1_ACLK>;
@@ -2653,7 +2655,6 @@
 			resets = <&src SKY1_DPU1_RCSU_RESET_N>,
 					<&src SKY1_DPU_RESET1_N>;
 			reset-names = "rcsu_reset", "ip_reset";
-			memory-region = <&dpu_gop>;
 			enabled_by_gop = <0>;
 			status = "disabled";
 
@@ -2678,7 +2679,8 @@
 			reg = <0x0 0x140f0000 0x0 0x20000>;
 			interrupts = <GIC_SPI 320 IRQ_TYPE_LEVEL_HIGH 0>;
 			iommus = <&smmu_mmhub 12>, <&smmu_mmhub 13>,
-				 <&smmu_mmhub 15>, <&smmu_mmhub 16>;
+				 <&smmu_mmhub 15>, <&smmu_mmhub 16>,
+				 <&smmu_mmhub 17>;
 			power-domains = <&smc_devpd SKY1_PD_DPU2>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU2_ACLK>;
@@ -2686,7 +2688,6 @@
 			resets = <&src SKY1_DPU2_RCSU_RESET_N>,
 					<&src SKY1_DPU_RESET2_N>;
 			reset-names = "rcsu_reset", "ip_reset";
-			memory-region = <&dpu_gop>;
 			enabled_by_gop = <0>;
 			status = "disabled";
 
@@ -2711,7 +2712,8 @@
 			reg = <0x0 0x14160000 0x0 0x20000>;
 			interrupts = <GIC_SPI 322 IRQ_TYPE_LEVEL_HIGH 0>;
 			iommus = <&smmu_mmhub 18>, <&smmu_mmhub 19>,
-				 <&smmu_mmhub 21>, <&smmu_mmhub 22>;
+				 <&smmu_mmhub 21>, <&smmu_mmhub 22>,
+				 <&smmu_mmhub 23>;
 			power-domains = <&smc_devpd SKY1_PD_DPU3>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU3_ACLK>;
@@ -2719,7 +2721,6 @@
 			resets = <&src SKY1_DPU3_RCSU_RESET_N>,
 					<&src SKY1_DPU_RESET3_N>;
 			reset-names = "rcsu_reset", "ip_reset";
-			memory-region = <&dpu_gop>;
 			enabled_by_gop = <0>;
 			status = "disabled";
 
@@ -2744,7 +2745,8 @@
 			reg = <0x0 0x141d0000 0x0 0x20000>;
 			interrupts = <GIC_SPI 324 IRQ_TYPE_LEVEL_HIGH 0>;
 			iommus = <&smmu_mmhub 24>, <&smmu_mmhub 25>,
-				 <&smmu_mmhub 27>, <&smmu_mmhub 28>;
+				 <&smmu_mmhub 27>, <&smmu_mmhub 28>,
+				 <&smmu_mmhub 29>;
 			power-domains = <&smc_devpd SKY1_PD_DPU4>;
 			power-domain-names = "dpu_pd";
 			clocks = <&scmi_clk CLK_TREE_DPU4_ACLK>;
@@ -2752,7 +2754,6 @@
 			resets = <&src SKY1_DPU4_RCSU_RESET_N>,
 					<&src SKY1_DPU_RESET4_N>;
 			reset-names = "rcsu_reset", "ip_reset";
-			memory-region = <&dpu_gop>;
 			enabled_by_gop = <0>;
 			status = "disabled";
 
