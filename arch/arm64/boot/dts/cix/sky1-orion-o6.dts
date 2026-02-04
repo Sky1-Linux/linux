@@ -397,6 +397,12 @@
 		>;
 	};
 
+	nvme_wake_gpio: nvme_wake_gpio {
+		sky1,pins = <
+			CIX_PAD_GPIO018_FUNC_SFI_GPIO3 (PULL_UP|DS_LEVEL4) /* GPIO018 - S5_gpio1 3 - WAKE_SSD */
+		>;
+	};
+
 	state_led_gpio: state_led_gpio {
 		sky1,pins = <
 			CIX_PAD_GPIO008_FUNC_GPIO008 (PULL_UP|DS_LEVEL4) /* GPIO008 - S5_gpio0 7 */
@@ -1473,6 +1479,7 @@
 &sky1_usbss_0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usb0>;
+	oc-gpio = <&s5_gpio0 25 IRQ_TYPE_LEVEL_LOW>;
 	sof_clk_freq = <8000000>;
 	lpm_clk_freq = <32000>;
 	status = "okay";
@@ -1557,6 +1564,7 @@
 &sky1_usbss_2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usb2>;
+	oc-gpio = <&s5_gpio0 27 IRQ_TYPE_LEVEL_LOW>;
 	sof_clk_freq = <8000000>;
 	lpm_clk_freq = <32000>;
 	status = "okay";
@@ -2174,8 +2182,9 @@
 &pcie_x4_rc {
 	plat-evk;
 	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_pcie_x4_rc>;
+	pinctrl-0 = <&pinctrl_pcie_x4_rc>, <&nvme_wake_gpio>;
 	reset-gpios = <&s5_gpio0 3 GPIO_ACTIVE_HIGH>;
+	wake-gpios = <&s5_gpio1 3 GPIO_ACTIVE_LOW>;
 	vcc-pcie-supply = <&vdd_3v3_nvme>;
 	status = "okay";
 };
