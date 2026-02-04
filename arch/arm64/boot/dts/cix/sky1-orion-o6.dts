@@ -2159,7 +2159,7 @@
 };
 
 &smmu_pciehub {
-	status = "disabled";
+	status = "okay";
 };
 
 &smmu_mmhub {
