@@ -1942,6 +1942,39 @@ static void arm_smmu_dump_event(struct arm_smmu_device *smmu, u64 *raw,
 	}
 }
 
+/*
+ * Per-SID event auto-suppression.  After SMMU_EVT_SUPPRESS_THRESHOLD events
+ * from the same stream ID, further events are silently dropped.  This handles
+ * hardware that generates continuous faults on SIDs that software cannot
+ * control (e.g. PCIe DTI ATS masters with secure-only registers).
+ *
+ * Returns true if the event should be suppressed.
+ */
+static bool arm_smmu_evt_suppressed(struct arm_smmu_device *smmu, u32 sid)
+{
+	int i, free_slot = -1;
+
+	for (i = 0; i < SMMU_EVT_SUPPRESS_SLOTS; i++) {
+		if (smmu->evt_suppress[i].count && smmu->evt_suppress[i].sid == sid) {
+			if (++smmu->evt_suppress[i].count == SMMU_EVT_SUPPRESS_THRESHOLD) {
+				dev_warn(smmu->dev,
+					 "auto-suppressing events for sid %#x (%u seen)\n",
+					 sid, smmu->evt_suppress[i].count);
+			}
+			return smmu->evt_suppress[i].count >= SMMU_EVT_SUPPRESS_THRESHOLD;
+		}
+		if (!smmu->evt_suppress[i].count && free_slot < 0)
+			free_slot = i;
+	}
+
+	/* New SID — start tracking */
+	if (free_slot >= 0) {
+		smmu->evt_suppress[free_slot].sid = sid;
+		smmu->evt_suppress[free_slot].count = 1;
+	}
+	return false;
+}
+
 static irqreturn_t arm_smmu_evtq_thread(int irq, void *dev)
 {
 	u64 evt[EVTQ_ENT_DWORDS];
@@ -1955,9 +1988,11 @@ static irqreturn_t arm_smmu_evtq_thread(int irq, void *dev)
 	do {
 		while (!queue_remove_raw(q, evt)) {
 			arm_smmu_decode_event(smmu, evt, &event);
+			if (arm_smmu_evt_suppressed(smmu, event.sid))
+				goto evt_next;
 			if (arm_smmu_handle_event(smmu, evt, &event))
 				arm_smmu_dump_event(smmu, evt, &event, &rs);
-
+evt_next:
 			put_device(event.dev);
 			cond_resched();
 		}

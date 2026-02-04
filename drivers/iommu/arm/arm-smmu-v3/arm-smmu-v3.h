@@ -807,6 +807,14 @@ struct arm_smmu_device {
 
 	struct rb_root			streams;
 	struct mutex			streams_mutex;
+
+	/* Per-SID event suppression for noisy streams (e.g. PCIe DTI ATS) */
+#define SMMU_EVT_SUPPRESS_SLOTS		8
+#define SMMU_EVT_SUPPRESS_THRESHOLD	3
+	struct {
+		u32			sid;
+		u32			count;
+	} evt_suppress[SMMU_EVT_SUPPRESS_SLOTS];
 };
 
 struct arm_smmu_stream {
