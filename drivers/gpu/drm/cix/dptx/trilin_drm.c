@@ -170,7 +170,7 @@ static int trilin_dp_connector_atomic_check(struct drm_connector *conn,
 	if (IS_ERR(new_crtc_state))
 		return PTR_ERR(new_crtc_state);
 
-	if (dp->caps.psr_sink_support && dp->psr_default_on)
+	if (dp->caps.psr_sink_support && dp->psr_config_on)
 		new_con_state->self_refresh_aware = true;
 
 	if (new_crtc_state->self_refresh_active && !dp->psr.enable) {
@@ -1110,6 +1110,20 @@ void trilin_dp_encoder_atomic_mode_set(
 			dp->pixel_per_cycle = 1;
 	}
 	trilin_dp_rcsu_cfg_adapter(dp, connector_state);
+
+	/* Disable PSR in 2ppc mode */
+	if (dp->pixel_per_cycle == 2
+		&& dp->psr_config_on && dp->caps.psr_sink_support) {
+		dp->psr_config_on = false;
+		DP_INFO("psr disable in 2ppc mode");
+	} else {
+		dp->psr_config_on = dp->psr_default_on;
+		DP_DEBUG("psr_config_on: %d", dp->psr_config_on);
+	}
+	if (dp->caps.psr_sink_support && dp->psr_config_on)
+		connector_state->self_refresh_aware = true;
+	else
+		connector_state->self_refresh_aware = false;
 }
 
 static const struct drm_encoder_helper_funcs trilin_dp_encoder_helper_funcs = {
