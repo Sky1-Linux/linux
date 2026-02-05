@@ -2,6 +2,7 @@
 // Copyright (C) 2024-2025 Arm Limited
 // Arm DMA-350 driver
 
+#include <linux/acpi.h>
 #include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -1519,10 +1520,20 @@ static const struct of_device_id d350_of_match[] __maybe_unused = {
 };
 MODULE_DEVICE_TABLE(of, d350_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id d350_acpi_match[] = {
+	{ "CIXH1006", 0 },
+	{ "CIXHA014", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, d350_acpi_match);
+#endif
+
 static struct platform_driver d350_driver = {
 	.driver = {
 		.name = "arm-dma350",
 		.of_match_table = of_match_ptr(d350_of_match),
+		.acpi_match_table = ACPI_PTR(d350_acpi_match),
 		.pm = &d350_pm_ops,
 	},
 	.probe = d350_probe,

@@ -5,6 +5,7 @@
  * Copyright 2024 Cix Technology Group Co., Ltd.
  */
 
+#include <linux/acpi.h>
 #include <linux/delay.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
@@ -128,11 +129,20 @@ static const struct of_device_id sky1_audss_reset_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, sky1_audss_reset_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id sky1_audss_reset_acpi_match[] = {
+	{ "CIXH6062", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, sky1_audss_reset_acpi_match);
+#endif
+
 static struct platform_driver sky1_audss_reset_driver = {
 	.probe = sky1_audss_reset_probe,
 	.driver = {
 		.name = "sky1-audss-reset",
 		.of_match_table = sky1_audss_reset_of_match,
+		.acpi_match_table = ACPI_PTR(sky1_audss_reset_acpi_match),
 	},
 };
 module_platform_driver(sky1_audss_reset_driver);

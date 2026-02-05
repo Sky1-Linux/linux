@@ -10,6 +10,7 @@
  * mode support.
  */
 
+#include <linux/acpi.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -587,6 +588,14 @@ static const struct of_device_id rts5453_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, rts5453_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id rts5453_acpi_match[] = {
+	{ "CIXH200D", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, rts5453_acpi_match);
+#endif
+
 static const struct i2c_device_id rts5453_id[] = {
 	{ "rts5453h" },
 	{ }
@@ -597,6 +606,7 @@ static struct i2c_driver rts5453_driver = {
 	.driver = {
 		.name = "rts5453",
 		.of_match_table = rts5453_of_match,
+		.acpi_match_table = ACPI_PTR(rts5453_acpi_match),
 		.pm = pm_sleep_ptr(&rts5453_pm_ops),
 	},
 	.probe = rts5453_probe,
