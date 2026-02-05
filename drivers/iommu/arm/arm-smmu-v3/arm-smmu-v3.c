@@ -81,6 +81,7 @@ DEFINE_MUTEX(arm_smmu_asid_lock);
 static struct arm_smmu_option_prop arm_smmu_options[] = {
 	{ ARM_SMMU_OPT_SKIP_PREFETCH, "hisilicon,broken-prefetch-cmd" },
 	{ ARM_SMMU_OPT_PAGE0_REGS_ONLY, "cavium,cn9900-broken-page1-regspace"},
+	{ ARM_SMMU_OPT_PCIE_ATS_OVERRIDE, "cix,pcie-ats-override" },
 	{ 0, NULL},
 };
 
@@ -1624,7 +1625,10 @@ void arm_smmu_make_cdtable_ste(struct arm_smmu_ste *target,
 			 STRTAB_STE_1_S1STALLD :
 			 0) |
 		FIELD_PREP(STRTAB_STE_1_EATS,
-			   ats_enabled ? STRTAB_STE_1_EATS_TRANS : 0));
+			   (ats_enabled ||
+			    ((smmu->options & ARM_SMMU_OPT_PCIE_ATS_OVERRIDE) &&
+			     dev_is_pci(master->dev))) ?
+				STRTAB_STE_1_EATS_TRANS : 0));
 
 	if ((smmu->features & ARM_SMMU_FEAT_ATTR_TYPES_OVR) &&
 	    s1dss == STRTAB_STE_1_S1DSS_BYPASS)
@@ -1676,7 +1680,10 @@ void arm_smmu_make_s2_domain_ste(struct arm_smmu_ste *target,
 
 	target->data[1] = cpu_to_le64(
 		FIELD_PREP(STRTAB_STE_1_EATS,
-			   ats_enabled ? STRTAB_STE_1_EATS_TRANS : 0));
+			   (ats_enabled ||
+			    ((smmu->options & ARM_SMMU_OPT_PCIE_ATS_OVERRIDE) &&
+			     dev_is_pci(master->dev))) ?
+				STRTAB_STE_1_EATS_TRANS : 0));
 
 	if (pgtbl_cfg->quirks & IO_PGTABLE_QUIRK_ARM_S2FWB)
 		target->data[1] |= cpu_to_le64(STRTAB_STE_1_S2FWB);
