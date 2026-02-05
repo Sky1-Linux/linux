@@ -124,19 +124,28 @@ def sync_efi_files(board: sky1_lib.Board, dry_run: bool) -> None:
             case _:
                 suffix = f"-sky1-{branch}"
 
-        # Find installed kernel image: /boot/vmlinuz-*{suffix}
+        # Find installed kernel image: /boot/vmlinuz-*{suffix}[.rN]
+        # The .rN suffix is optional (added by revision-aware builds)
         vmlinuz_matches = sorted(
-            Path("/boot").glob(f"vmlinuz-*{suffix}"),
+            list(Path("/boot").glob(f"vmlinuz-*{suffix}"))
+            + list(Path("/boot").glob(f"vmlinuz-*{suffix}.r*")),
             key=lambda p: p.name,
             reverse=True,
         )
 
-        # Find installed DTB: /usr/lib/linux-image-*{suffix}/cix/{board}.dtb
+        # Find installed DTB: /usr/lib/linux-image-*{suffix}[.rN]/cix/{board}.dtb
         # Sort by full path (not p.name which is identical for all matches)
         # so the parent dir name (linux-image-6.18.8-sky1) picks the latest.
         dtb_matches = sorted(
-            Path("/usr/lib").glob(
-                f"linux-image-*{suffix}/cix/{board.dts_base}.dtb"
+            list(
+                Path("/usr/lib").glob(
+                    f"linux-image-*{suffix}/cix/{board.dts_base}.dtb"
+                )
+            )
+            + list(
+                Path("/usr/lib").glob(
+                    f"linux-image-*{suffix}.r*/cix/{board.dts_base}.dtb"
+                )
             ),
             key=lambda p: str(p),
             reverse=True,
