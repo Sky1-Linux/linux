@@ -379,8 +379,19 @@ static const struct of_device_id scmi_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, scmi_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id scmi_acpi_match[] = {
+	{ "CIXHA006", 0 },
+	{ /* Sentinel */ },
+};
+MODULE_DEVICE_TABLE(acpi, scmi_acpi_match);
+#else
+#define scmi_acpi_match NULL
+#endif
+
 DEFINE_SCMI_TRANSPORT_DRIVER(scmi_mailbox, scmi_mailbox_driver,
-			     scmi_mailbox_desc, scmi_of_match, core);
+			     scmi_mailbox_desc, scmi_of_match,
+			     scmi_acpi_match, core);
 module_platform_driver(scmi_mailbox_driver);
 
 MODULE_AUTHOR("Sudeep Holla <sudeep.holla@arm.com>");

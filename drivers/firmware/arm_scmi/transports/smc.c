@@ -314,7 +314,7 @@ static const struct of_device_id scmi_of_match[] = {
 MODULE_DEVICE_TABLE(of, scmi_of_match);
 
 DEFINE_SCMI_TRANSPORT_DRIVER(scmi_smc, scmi_smc_driver, scmi_smc_desc,
-			     scmi_of_match, core);
+			     scmi_of_match, NULL, core);
 module_platform_driver(scmi_smc_driver);
 
 MODULE_AUTHOR("Peng Fan <peng.fan@nxp.com>");
