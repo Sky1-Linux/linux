@@ -217,7 +217,7 @@ static int cdns_sky1_platform_suspend(struct device *dev,
 
 	hcd = dev_get_drvdata(&xhci_dev->dev);
 	if (!hcd) {
-		dev_err(dev, "host controller have not registered\n");
+		dev_dbg(dev, "host controller have not registered\n");
 		return 0;
 	}
 	xhci = hcd_to_xhci(hcd);
@@ -633,6 +633,7 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	/* Note: mainline only supports platform_suspend, not platform_reset/platform_u3_disable */
 	cdns_sky1_pdata->platform_suspend = cdns_sky1_platform_suspend;
+	cdns_sky1_pdata->quirks = CDNS3_DEFAULT_PM_RUNTIME_ALLOW;
 	if (!ACPI_COMPANION(dev)) {
 		cdns_sky1_auxdata->platform_data = cdns_sky1_pdata;
 		ret = of_platform_populate(node, NULL, cdns_sky1_auxdata, dev);
