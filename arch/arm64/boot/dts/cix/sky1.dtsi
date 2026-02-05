@@ -676,6 +676,13 @@
 		arm,boot-active-sids = <0x0000 0x0100 0x3000 0x3100
 					0x6000 0x6100 0x9000 0x9100
 					0xc000 0xc100>;
+		/*
+		 * Sky1 PCIe controller's DTI ATS Master can send translated
+		 * TLP messages even when endpoint devices don't support ATS.
+		 * Enable EATS (Enhanced ATS) for all PCIe devices to accept
+		 * these translated transactions instead of generating errors.
+		 */
+		cix,pcie-ats-override;
 		status = "disabled";
 	};
 
