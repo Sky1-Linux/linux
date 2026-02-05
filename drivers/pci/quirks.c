@@ -2526,6 +2526,10 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ASMEDIA, 0x1080, quirk_disable_aspm_l0s_l
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_FREESCALE, 0x0451, quirk_disable_aspm_l0s_l1);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_PASEMI, 0xa002, quirk_disable_aspm_l0s_l1);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_HUAWEI, 0x1105, quirk_disable_aspm_l0s_l1);
+/* Phison E13T NVMe - ASPM causes link instability */
+DECLARE_PCI_FIXUP_HEADER(0x1987, 0x5013, quirk_disable_aspm_l0s_l1);
+/* Kingston NVMe - ASPM causes link instability */
+DECLARE_PCI_FIXUP_HEADER(0x2646, 0x501d, quirk_disable_aspm_l0s_l1);
 
 /*
  * Some Pericom PCIe-to-PCI bridges in reverse mode need the PCIe Retrain
