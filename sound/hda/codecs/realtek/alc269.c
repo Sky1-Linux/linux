@@ -3816,6 +3816,7 @@ enum {
 	ALC245_FIXUP_HP_TAS2781_I2C_MUTE_LED,
 	ALC288_FIXUP_SURFACE_SWAP_DACS,
 	ALC236_FIXUP_HP_MUTE_LED_MICMUTE_GPIO,
+	ALC256_FIXUP_CIX_PHECDA,
 };
 
 /* A special fixup for Lenovo C940 and Yoga Duet 7;
@@ -3850,6 +3851,22 @@ static void alc287_fixup_lenovo_yoga_book_9i(struct hda_codec *codec,
 	else
 		id = ALC287_FIXUP_IDEAPAD_BASS_SPK_AMP; /* Yoga 9i */
 	__snd_hda_apply_fixup(codec, id, action, 0);
+}
+
+static void alc_fixup_cix_phecda(struct hda_codec *codec,
+				 const struct hda_fixup *fix, int action)
+{
+	struct alc_spec *spec = codec->spec;
+
+	if (action == HDA_FIXUP_ACT_PRE_PROBE) {
+		/*
+		 * CIX Sky1 platform: disable auto mic switching by default
+		 * so users can use the internal DMIC even with headset plugged in.
+		 * Also disable 3K pull-low for headset detection.
+		 */
+		spec->en_3kpull_low = false;
+		spec->gen.suppress_auto_mic = true;
+	}
 }
 
 static const struct hda_fixup alc269_fixups[] = {
@@ -6306,6 +6323,10 @@ static const struct hda_fixup alc269_fixups[] = {
 		.type = HDA_FIXUP_FUNC,
 		.v.func = alc288_fixup_surface_swap_dacs,
 	},
+	[ALC256_FIXUP_CIX_PHECDA] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = alc_fixup_cix_phecda,
+	},
 };
 
 static const struct hda_quirk alc269_fixup_tbl[] = {
@@ -7032,6 +7053,7 @@ static const struct hda_quirk alc269_fixup_tbl[] = {
 	SND_PCI_QUIRK(0x10ec, 0x124c, "Intel Reference board", ALC295_FIXUP_CHROME_BOOK),
 	SND_PCI_QUIRK(0x10ec, 0x1252, "Intel Reference board", ALC295_FIXUP_CHROME_BOOK),
 	SND_PCI_QUIRK(0x10ec, 0x1254, "Intel Reference board", ALC295_FIXUP_CHROME_BOOK),
+	SND_PCI_QUIRK(0x10ec, 0x129e, "CIX Sky1 Phecda Board", ALC256_FIXUP_CIX_PHECDA),
 	SND_PCI_QUIRK(0x10ec, 0x12cc, "Intel Reference board", ALC295_FIXUP_CHROME_BOOK),
 	SND_PCI_QUIRK(0x10ec, 0x12f6, "Intel Reference board", ALC295_FIXUP_CHROME_BOOK),
 	SND_PCI_QUIRK(0x10f7, 0x8338, "Panasonic CF-SZ6", ALC269_FIXUP_ASPIRE_HEADSET_MIC),

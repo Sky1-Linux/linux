@@ -163,7 +163,7 @@ static int dai_set_sysclk(struct snd_pcm_substream *substream,
 			mclk_fs = 256;
 			mclk_div = 2;
 		} else if (sample_rate == 192000) {
-			mclk_fs = 128;
+			mclk_fs = 256;
 			mclk_div = 0;
 		}
 
@@ -464,6 +464,10 @@ int cix_card_parse_of(struct cix_asoc_card *priv)
 	link_info = devm_kcalloc(dev, num_links, sizeof(*link_info), GFP_KERNEL);
 	if (!link_info)
 		return -ENOMEM;
+
+	/* DMA trigger ordering: start before I2S, stop after I2S */
+	link->trigger_start = SND_SOC_TRIGGER_ORDER_DEFAULT;
+	link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
 
 	card->num_links = num_links;
 	card->dai_link = link;

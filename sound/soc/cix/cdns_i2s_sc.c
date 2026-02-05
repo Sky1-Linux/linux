@@ -339,31 +339,39 @@ static void cdns_i2s_sc_rxtx_common_config(struct cdns_i2s_sc_priv *i2s_sc_priv,
 
 static void cdns_i2s_sc_tx_config(struct cdns_i2s_sc_priv *i2s_sc_priv, bool on)
 {
-	u32 irq_mask = 0;
-
-	irq_mask |= I2S_CTRL_I2S_MASK;
+	u32 irq_mask = I2S_CTRL_I2S_MASK;
 
 	if (on) {
 		cdns_i2s_sc_rxtx_common_config(i2s_sc_priv, on);
 
-		/* Transmitter data underrun interrupt unmask */
 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL, irq_mask, irq_mask);
 
 		if (i2s_sc_priv->is_tdm_mode)
-			/* TDM mode channels transmit enale */
 			regmap_update_bits(i2s_sc_priv->regmap, I2S_TDM_FD_DIR, I2S_TDM_FD_DIR_CHN_TXEN,
 					   FIELD_PREP(I2S_TDM_FD_DIR_CHN_TXEN, i2s_sc_priv->tdm_config.tx_mask));
 
-		/* Full-duplex mode transmitter enable */
 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
 				   I2S_CTRL_FDX_I2S_FTX_EN, I2S_CTRL_FDX_I2S_FTX_EN);
-
-		/* Transceiver enable */
 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL,
 				   I2S_CTRL_I2S_EN, I2S_CTRL_I2S_EN);
 
 		i2s_sc_priv->tx_start = true;
 	} else {
+		unsigned int timeout = 16;
+		u32 fifo_level;
+
+		/* Drain TX FIFO to avoid residue data in full-duplex mode */
+		while (timeout--) {
+			regmap_read(i2s_sc_priv->regmap, I2S_FIFO_LEVEL, &fifo_level);
+			if (!fifo_level)
+				break;
+			udelay(125);
+		}
+		if (!timeout)
+			dev_warn(i2s_sc_priv->dev, "tx fifo drain timeout\n");
+		else
+			udelay(250); /* Generate underrun to clear internal state */
+
 		i2s_sc_priv->tx_start = false;
 
 		regmap_update_bits(i2s_sc_priv->regmap, I2S_CTRL_FDX,
@@ -567,7 +575,7 @@ static int cdns_i2s_sc_set_fmt(struct snd_soc_dai *cpu_dai, unsigned int fmt)
 	return 0;
 }
 
-static int cdns_i2s_sc_startup(struct snd_pcm_substream *substream,
+static int cdns_i2s_sc_prepare(struct snd_pcm_substream *substream,
 			       struct snd_soc_dai *cpu_dai)
 {
 	struct cdns_i2s_sc_priv *i2s_sc_priv = snd_soc_dai_get_drvdata(cpu_dai);
@@ -821,8 +829,8 @@ static const struct snd_soc_dai_ops cdns_i2s_sc_dai_ops = {
 	.set_tdm_slot = cdns_i2s_sc_set_tdm_slot,
 	.set_fmt = cdns_i2s_sc_set_fmt,
 
-	.startup = cdns_i2s_sc_startup,
 	.hw_params = cdns_i2s_sc_hw_params,
+	.prepare = cdns_i2s_sc_prepare,
 	.trigger = cdns_i2s_sc_trigger,
 };
 
