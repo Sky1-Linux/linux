@@ -527,7 +527,7 @@ static const struct of_device_id scmi_of_match[] = {
 };
 
 DEFINE_SCMI_TRANSPORT_DRIVER(scmi_optee, scmi_optee_driver, scmi_optee_desc,
-			     scmi_of_match, core);
+			     scmi_of_match, NULL, core);
 
 static int scmi_optee_service_probe(struct device *dev)
 {
