@@ -71,6 +71,7 @@
 #else
 #include <linux/dma-mapping.h>
 #include <linux/moduleparam.h>
+#include <linux/arch_topology.h>
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,31)
@@ -17710,6 +17711,22 @@ static void rtl8125_free_irq(struct rtl8125_private *tp)
         }
 }
 
+#ifdef CONFIG_ARM64
+/*
+ * Check if CPU is a little/efficiency core based on capacity.
+ * On ARM big.LITTLE systems, efficiency cores have lower capacity (~446)
+ * compared to performance cores (~1024). We avoid scheduling network
+ * interrupts on little cores to reduce latency variance.
+ */
+#define RTL8125_LITTLE_CORE_CAPACITY 512
+
+static bool rtl8125_is_little_core(int cpu)
+{
+        unsigned long capacity = topology_get_cpu_scale(cpu);
+        return capacity < RTL8125_LITTLE_CORE_CAPACITY;
+}
+#endif
+
 static int rtl8125_alloc_irq(struct rtl8125_private *tp)
 {
         struct net_device *dev = tp->dev;
@@ -17718,6 +17735,18 @@ static int rtl8125_alloc_irq(struct rtl8125_private *tp)
         struct r8125_napi *r8125napi;
         int i = 0;
         const int len = sizeof(tp->irq_tbl[0].name);
+#ifdef CONFIG_ARM64
+        cpumask_var_t big_core_mask;
+        int cpu;
+
+        /* Build mask of performance cores for IRQ affinity */
+        if (zalloc_cpumask_var(&big_core_mask, GFP_KERNEL)) {
+                for_each_online_cpu(cpu) {
+                        if (!rtl8125_is_little_core(cpu))
+                                cpumask_set_cpu(cpu, big_core_mask);
+                }
+        }
+#endif
 
 #if defined(RTL_USE_NEW_INTR_API)
         for (i=0; i<tp->irq_nvecs; i++) {
@@ -17737,6 +17766,9 @@ static int rtl8125_alloc_irq(struct rtl8125_private *tp)
 
                 irq->vector = pci_irq_vector(tp->pci_dev, i);
                 irq->requested = 1;
+#ifdef CONFIG_ARM64
+                irq_set_affinity_hint(irq->vector, big_core_mask);
+#endif
         }
 #else
         unsigned long irq_flags = 0;
@@ -17774,6 +17806,9 @@ static int rtl8125_alloc_irq(struct rtl8125_private *tp)
         if (rc)
                 rtl8125_free_irq(tp);
 
+#ifdef CONFIG_ARM64
+        free_cpumask_var(big_core_mask);
+#endif
         return rc;
 }
 
