@@ -6,6 +6,7 @@
 // Copyright Intel Corporation (C) 2019-2020. All rights reserved.
 // Copyright (C) 2020 Texas Instruments Incorporated - http://www.ti.com
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/completion.h>
 #include <linux/delay.h>
@@ -2229,6 +2230,14 @@ static const struct of_device_id cqspi_dt_ids[] = {
 
 MODULE_DEVICE_TABLE(of, cqspi_dt_ids);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id cqspi_acpi_ids[] = {
+	{ "CIXH2002", (kernel_ulong_t)&cdns_qspi },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, cqspi_acpi_ids);
+#endif
+
 static struct platform_driver cqspi_platform_driver = {
 	.probe = cqspi_probe,
 	.remove = cqspi_remove,
@@ -2236,6 +2245,7 @@ static struct platform_driver cqspi_platform_driver = {
 		.name = CQSPI_NAME,
 		.pm = pm_ptr(&cqspi_dev_pm_ops),
 		.of_match_table = cqspi_dt_ids,
+		.acpi_match_table = ACPI_PTR(cqspi_acpi_ids),
 	},
 };
 

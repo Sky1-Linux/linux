@@ -5,6 +5,7 @@
  * Author: Boris Brezillon <boris.brezillon@bootlin.com>
  */
 
+#include <linux/acpi.h>
 #include <linux/bitops.h>
 #include <linux/clk.h>
 #include <linux/err.h>
@@ -1547,6 +1548,14 @@ static const struct of_device_id cdns_i3c_master_of_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, cdns_i3c_master_of_ids);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id cdns_i3c_master_acpi_ids[] = {
+	{ "CIXH200C", (kernel_ulong_t)&cdns_i3c_devdata },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, cdns_i3c_master_acpi_ids);
+#endif
+
 static int cdns_i3c_master_probe(struct platform_device *pdev)
 {
 	struct cdns_i3c_master *master;
@@ -1637,6 +1646,7 @@ static struct platform_driver cdns_i3c_master = {
 	.driver = {
 		.name = "cdns-i3c-master",
 		.of_match_table = cdns_i3c_master_of_ids,
+		.acpi_match_table = ACPI_PTR(cdns_i3c_master_acpi_ids),
 	},
 };
 module_platform_driver(cdns_i3c_master);

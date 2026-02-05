@@ -5,6 +5,7 @@
  * 2) platform_data being correctly configured
  */
 
+#include <linux/acpi.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
@@ -351,8 +352,15 @@ static const struct of_device_id pwm_backlight_of_match[] = {
 	{ .compatible = "pwm-backlight" },
 	{ }
 };
-
 MODULE_DEVICE_TABLE(of, pwm_backlight_of_match);
+
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id pwm_backlight_acpi_match[] = {
+	{ "CIXH5041", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, pwm_backlight_acpi_match);
+#endif
 #else
 static int pwm_backlight_parse_dt(struct device *dev,
 				  struct platform_pwm_backlight_data *data)
@@ -695,6 +703,7 @@ static struct platform_driver pwm_backlight_driver = {
 		.name		= "pwm-backlight",
 		.pm		= &pwm_backlight_pm_ops,
 		.of_match_table	= of_match_ptr(pwm_backlight_of_match),
+		.acpi_match_table = ACPI_PTR(pwm_backlight_acpi_match),
 	},
 	.probe		= pwm_backlight_probe,
 	.remove		= pwm_backlight_remove,

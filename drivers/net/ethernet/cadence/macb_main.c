@@ -6,6 +6,7 @@
  */
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/crc32.h>
@@ -5412,6 +5413,14 @@ static const struct of_device_id macb_dt_ids[] = {
 MODULE_DEVICE_TABLE(of, macb_dt_ids);
 #endif /* CONFIG_OF */
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id macb_acpi_match[] = {
+	{ "CIXH7020", (kernel_ulong_t)&pc302gem_config },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, macb_acpi_match);
+#endif
+
 static const struct macb_config default_gem_config = {
 	.caps = MACB_CAPS_GIGABIT_MODE_AVAILABLE |
 		MACB_CAPS_JUMBO |
@@ -5937,6 +5946,7 @@ static struct platform_driver macb_driver = {
 	.driver		= {
 		.name		= "macb",
 		.of_match_table	= of_match_ptr(macb_dt_ids),
+		.acpi_match_table = ACPI_PTR(macb_acpi_match),
 		.pm	= &macb_pm_ops,
 	},
 	.shutdown	= macb_shutdown,

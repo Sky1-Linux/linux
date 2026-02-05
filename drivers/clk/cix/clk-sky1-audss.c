@@ -5,6 +5,7 @@
  * Copyright 2024 Cix Technology Group Co., Ltd.
  */
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
 #include <linux/io.h>
@@ -776,12 +777,21 @@ static const struct of_device_id sky1_audss_clk_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, sky1_audss_clk_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id sky1_audss_clk_acpi_match[] = {
+	{ "CIXH6061", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, sky1_audss_clk_acpi_match);
+#endif
+
 static struct platform_driver sky1_audss_clk_driver = {
 	.probe = sky1_audss_clk_probe,
 	.remove = sky1_audss_clk_remove,
 	.driver = {
 		.name = "sky1-audss-clk",
 		.of_match_table = sky1_audss_clk_of_match,
+		.acpi_match_table = ACPI_PTR(sky1_audss_clk_acpi_match),
 		.pm = &sky1_audss_clk_pm_ops,
 	},
 };

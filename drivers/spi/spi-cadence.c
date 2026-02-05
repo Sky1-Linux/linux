@@ -7,6 +7,7 @@
  * based on Blackfin On-Chip SPI Driver (spi_bfin5xx.c)
  */
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
@@ -802,6 +803,14 @@ static const struct of_device_id cdns_spi_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, cdns_spi_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id cdns_spi_acpi_match[] = {
+	{ "CIXH2001", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, cdns_spi_acpi_match);
+#endif
+
 /* cdns_spi_driver - This structure defines the SPI subsystem platform driver */
 static struct platform_driver cdns_spi_driver = {
 	.probe	= cdns_spi_probe,
@@ -809,6 +818,7 @@ static struct platform_driver cdns_spi_driver = {
 	.driver = {
 		.name = CDNS_SPI_NAME,
 		.of_match_table = cdns_spi_of_match,
+		.acpi_match_table = ACPI_PTR(cdns_spi_acpi_match),
 		.pm = &cdns_spi_dev_pm_ops,
 	},
 };
