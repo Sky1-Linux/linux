@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-only
 obj-$(CONFIG_R8125) += r8125.o
-r8125-objs := r8125_n.o rtl_eeprom.o rtltool.o
+r8125-objs := r8125_n.o rtl_eeprom.o rtltool.o r8125_rss.o
 
 ccflags-y += -DCONFIG_R8125_NAPI
 ccflags-y += -DCONFIG_R8125_VLAN
