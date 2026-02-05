@@ -569,6 +569,7 @@ void trilin_dp_connector_debugfs_init(struct drm_connector *connector,
 				      struct dentry *root);
 
 int trilin_dp_pm_prepare(struct trilin_dp *dp);
+int trilin_dp_pm_resume_early(struct trilin_dp *dp);
 int trilin_dp_pm_complete(struct trilin_dp *dp);
 int trilin_dp_hpd_config_cb(struct trilin_dp *dp);
 int trilin_dp_deinit_config(struct trilin_dp *dp);

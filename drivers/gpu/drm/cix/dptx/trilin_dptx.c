@@ -16,10 +16,14 @@
 //	along with this program. If not, see <http://www.gnu.org/licenses/>.
 //------------------------------------------------------------------------------
 
+#include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_atomic_uapi.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
+#include <drm/drm_drv.h>
 #include <drm/drm_edid.h>
+#include <drm/drm_modeset_lock.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_managed.h>
 #include <drm/drm_modes.h>
@@ -2717,13 +2721,87 @@ static irqreturn_t trilin_dp_irq_handler(int irq, void *data)
  * Common function for trilin_drm.c and trilin_drm_mst.c
  */
 
+/*
+ * trilin_dp_pm_resume_early - Early resume to force connector state reset
+ *
+ * This function uses DRM_MODESET_LOCK_ALL to safely manipulate the atomic
+ * state during resume. It forces all connectors to disconnected state,
+ * which ensures a clean state for the subsequent complete phase.
+ */
+int trilin_dp_pm_resume_early(struct trilin_dp *dp)
+{
+	struct drm_connector *connector = &dp->connector.base;
+	struct drm_device *dev = connector->dev;
+	struct drm_modeset_acquire_ctx ctx;
+	struct drm_atomic_state *old_state = dev->mode_config.suspend_state;
+	struct drm_atomic_state *new_state = NULL;
+	struct drm_connector_state *conn_state;
+	struct drm_connector *conn;
+	int ret, i;
+
+	DP_INFO("enter");
+
+	if (IS_ERR(old_state)) {
+		DP_ERR("old state err");
+		return PTR_ERR(old_state);
+	}
+
+	if (!old_state) {
+		DP_ERR("old state null");
+		return -EINVAL;
+	}
+
+	/* Force status disconnected with proper modeset locking */
+	DRM_MODESET_LOCK_ALL_BEGIN(dev, ctx, 0, ret);
+	new_state = drm_atomic_helper_duplicate_state(dev, &ctx);
+
+	if (IS_ERR(new_state)) {
+		DP_ERR("state duplication failed");
+		goto unlock;
+	}
+
+	for_each_new_connector_in_state(new_state, conn, conn_state, i) {
+		ret = drm_atomic_set_crtc_for_connector(conn_state, NULL);
+		if (ret) {
+			DP_ERR("set crtc null failed");
+			goto state_put;
+		}
+		conn->status = connector_status_disconnected;
+		drm_connector_update_edid_property(conn, NULL);
+		drm_mode_prune_invalid(dev, &conn->modes, false);
+	}
+
+	drm_atomic_state_put(old_state);
+	dev->mode_config.suspend_state = new_state;
+	new_state = NULL;
+
+state_put:
+	if (new_state)
+		drm_atomic_state_put(new_state);
+unlock:
+	DRM_MODESET_LOCK_ALL_END(dev, ctx, ret);
+	return ret;
+}
+
+/*
+ * trilin_dp_pm_prepare - Prepare for system suspend
+ *
+ * Note: mutex must be released before cancel_delayed_work_sync() to avoid
+ * deadlock. The work callbacks may need session_lock, and waiting for them
+ * to complete while holding the lock would deadlock.
+ */
 int trilin_dp_pm_prepare(struct trilin_dp *dp)
 {
 	mutex_lock(&dp->session_lock);
 	DP_DEBUG("enter");
 	trilin_dp_mst_suspend(dp);
+	mutex_unlock(&dp->session_lock);
+
+	/* Release lock before sync - work callbacks may need it */
 	cancel_delayed_work_sync(&dp->hpd_irq_work);
 	cancel_delayed_work_sync(&dp->hpd_event_work);
+
+	mutex_lock(&dp->session_lock);
 	disable_irq(dp->irq);
 	dp->state |= DP_STATE_SUSPENDED;
 	if (!dp->active_stream_cnt) {
@@ -2731,7 +2809,7 @@ int trilin_dp_pm_prepare(struct trilin_dp *dp)
 		trilin_dp_host_deinit(dp);
 	}
 	dp->status = connector_status_unknown;
-	dp->plugin = false;
+	dp->state &= ~DP_STATE_CONNECTED;
 	mutex_unlock(&dp->session_lock);
 	return 0;
 }
