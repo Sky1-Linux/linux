@@ -43,6 +43,7 @@
 #include <linux/reset.h>
 #include <linux/kernel.h>
 #include <linux/clk-provider.h>
+#include <linux/workqueue.h>
 
 #include "trilin_dptx_reg.h"
 #include "trilin_host_tmr.h"
@@ -2404,8 +2405,8 @@ static int trilin_dp_host_init_from_bootloader(struct trilin_dp *dp)
 
 	/* add force to detect to sync call detect. */
 	drm_helper_probe_detect(&dp->connector.base, NULL, false);
-	/* then call the hpd envent */
-	schedule_delayed_work(&dp->hpd_event_work, 0);
+	/* then call the hpd event - use freezable workqueue */
+	queue_delayed_work(system_freezable_wq, &dp->hpd_event_work, 0);
 	return rc;
 }
 
@@ -2707,12 +2708,13 @@ static irqreturn_t trilin_dp_irq_handler(int irq, void *data)
 		u32 delay = 0;
 		if (trilin_dp_get_hpd_state(dp))
 			delay = dp->delay_after_hpd;
-		schedule_delayed_work(&dp->hpd_event_work,
-				      msecs_to_jiffies(delay));
+		/* Use freezable workqueue to prevent races during suspend */
+		queue_delayed_work(system_freezable_wq, &dp->hpd_event_work,
+				   msecs_to_jiffies(delay));
 	}
 
 	if (status & TRILIN_DPTX_INTERRUPT_HPD_IRQ)
-		schedule_delayed_work(&dp->hpd_irq_work, 0);
+		queue_delayed_work(system_freezable_wq, &dp->hpd_irq_work, 0);
 
 	return IRQ_HANDLED;
 }
