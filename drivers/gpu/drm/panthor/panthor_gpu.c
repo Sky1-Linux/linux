@@ -123,13 +123,17 @@ int panthor_gpu_init(struct panthor_device *ptdev)
 	if (ret)
 		return ret;
 
-	irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "GPU");
-	if (irq < 0) {
-		/* Try lowercase for non-Sky1 platforms */
-		irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "gpu");
-		if (irq < 0)
-			return irq;
+	if (has_acpi_companion(ptdev->base.dev)) {
+		irq = platform_get_irq(to_platform_device(ptdev->base.dev), 2);
+	} else {
+		irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "GPU");
+		if (irq < 0) {
+			/* Try lowercase for non-Sky1 platforms */
+			irq = platform_get_irq_byname(to_platform_device(ptdev->base.dev), "gpu");
+		}
 	}
+	if (irq < 0)
+		return irq;
 
 	ret = panthor_request_gpu_irq(ptdev, &ptdev->gpu->irq, irq, GPU_INTERRUPTS_MASK);
 	if (ret)
