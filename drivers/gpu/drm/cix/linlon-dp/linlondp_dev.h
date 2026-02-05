@@ -156,6 +156,9 @@ struct linlondp_dev_funcs {
 	/** @gop_mode_changed: test if gop mode changed */
 	bool (*gop_mode_changed)(struct linlondp_dev *mdev,
 				 struct drm_display_mode *mode);
+
+	/** @dpu_reset: SW reset for DPU on flip timeout */
+	void (*dpu_reset)(struct linlondp_dev *mdev);
 };
 
 /*
