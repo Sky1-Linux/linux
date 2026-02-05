@@ -144,6 +144,7 @@ struct sky1_pcie {
 
 	u8 linkctrl_offset;
 	u32 local_irq;
+	u32 max_aspm_support;	/* DT property: bit0=L0s, bit1=L1 */
 	spinlock_t aer_lock;
 	struct work_struct pme_work;
 	bool is_aer_uncor_panic;

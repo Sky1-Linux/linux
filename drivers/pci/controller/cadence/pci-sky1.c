@@ -10,6 +10,7 @@
 #include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/iopoll.h>
 #include <linux/of.h>
@@ -77,6 +78,9 @@
 #define I_LOCAL_ERR_MASK_REG1 (CDNS_PCIE_IP_REG_BANK_BASE + 0x144c)
 
 #define POWER_STATE_CHANGE_CTRL (CDNS_PCIE_IP_REG_BANK_BASE + 0x1430)
+
+/* TLP filter control - for filtering LTR and PTM messages */
+#define I_HAL_CTRL_DEC_TLP_FILTER (CDNS_PCIE_IP_REG_BANK_BASE + 0x100c)
 
 /* indication bit */
 #define LTSSM_TRANS_DEBUG_CTRL_REG0 (CDNS_PCIE_IP_REG_BANK_BASE + 0x6cc)
@@ -1425,7 +1429,36 @@ static int sky1_pcie_parse_wake_gpio(struct sky1_pcie *pcie)
 	}
 	pcie->wake = gpiodesc;
 
+	if (pcie->wake) {
+		dev_dbg(dev, "wakeup-source\n");
+		device_init_wakeup(dev, true);
+		enable_irq_wake(gpiod_to_irq(pcie->wake));
+	}
+
 	return ret;
+}
+
+/*
+ * Parse max-aspm-support device tree property.
+ * bit0: enable L0s, bit1: enable L1
+ * Default is 0x2 (L1 enabled, L0s disabled) if property not present.
+ */
+static void sky1_pcie_parse_max_aspm_support(struct sky1_pcie *pcie)
+{
+	struct device *dev = pcie->dev;
+	u32 max_aspm_support;
+	int ret;
+
+	ret = device_property_read_u32(dev, "max-aspm-support", &max_aspm_support);
+	if (ret) {
+		dev_dbg(dev, "Get property max-aspm-support fail:%d\n", ret);
+		max_aspm_support = 0x2;
+	}
+
+	if (max_aspm_support <= 3)
+		pcie->max_aspm_support = max_aspm_support;
+	else
+		pcie->max_aspm_support = 2;
 }
 
 static int sky1_pcie_en_ep_power(struct sky1_pcie *pcie, bool en)
@@ -1632,6 +1665,7 @@ static int sky1_pcie_parse_property(struct platform_device *pdev,
 		return ret;
 
 	sky1_pcie_parse_aer_irq(pcie);
+	sky1_pcie_parse_max_aspm_support(pcie);
 
 	sky1_pcie_init_bases(pcie);
 
@@ -1785,25 +1819,41 @@ static void sky1_pcie_set_refclk(struct sky1_pcie *pcie, bool en)
 
 static void sky1_pcie_set_l0s_disable(struct sky1_pcie *pcie)
 {
-	struct platform_device *pdev = to_platform_device(pcie->dev);
-	struct device_node *np = pdev->dev.of_node;
 	u8 offset;
 	u32 reg;
-
-	/*
-	 * TODO:
-	 * We found that some devices do not support L0s, and the system
-	 * startup will cause hang. The power consumption benefit is not
-	 * significant. It will be debugged in the future.
-	 */
-	if (!of_property_read_bool(np, "aspm-no-l0s"))
-		return;
 
 	offset = sky1_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
 	/* Clear L0s from RC's link cap */
 	reg = sky1_pcie_ctrl_readl_reg(pcie, offset + PCI_EXP_LNKCAP);
 	reg &= ~PCI_EXP_LNKCAP_ASPM_L0S;
 	sky1_pcie_ctrl_writel_reg(pcie, offset + PCI_EXP_LNKCAP, reg);
+}
+
+static void sky1_pcie_set_l1_disable(struct sky1_pcie *pcie)
+{
+	u8 offset;
+	u32 reg;
+
+	offset = sky1_pcie_find_capability(pcie->reg_base, PCI_CAP_ID_EXP);
+	/* Clear L1 from RC's link cap */
+	reg = sky1_pcie_ctrl_readl_reg(pcie, offset + PCI_EXP_LNKCAP);
+	reg &= ~PCI_EXP_LNKCAP_ASPM_L1;
+	sky1_pcie_ctrl_writel_reg(pcie, offset + PCI_EXP_LNKCAP, reg);
+}
+
+/*
+ * Filter LTR (Latency Tolerance Reporting) and PTM (Precision Time
+ * Measurement) TLP messages to prevent issues with devices that don't
+ * properly handle these optional PCIe features.
+ */
+static void sky1_pcie_filter_msg(struct sky1_pcie *pcie)
+{
+	u32 reg;
+
+	reg = cdns_pcie_readl(pcie->cdns_pcie, I_HAL_CTRL_DEC_TLP_FILTER);
+	/* bit3: LTR, bit6: PTM */
+	reg |= BIT(3) | BIT(6);
+	cdns_pcie_writel(pcie->cdns_pcie, I_HAL_CTRL_DEC_TLP_FILTER, reg);
 }
 
 /*
@@ -1845,9 +1895,17 @@ static void sky1_pcie_init(struct sky1_pcie *pcie)
 	sky1_pcie_init_rc_bar_cfg(pcie);
 
 	sky1_pcie_set_devctrl(pcie);
-	sky1_pcie_set_l0s_disable(pcie);
 
-	// if set D3hot，it will hang, power state change set to 0
+	/* Disable L0s/L1 based on DT max-aspm-support property */
+	if (!(pcie->max_aspm_support & BIT(0)))
+		sky1_pcie_set_l0s_disable(pcie);
+	if (!(pcie->max_aspm_support & BIT(1)))
+		sky1_pcie_set_l1_disable(pcie);
+
+	/* Filter LTR and PTM messages */
+	sky1_pcie_filter_msg(pcie);
+
+	/* D3hot workaround: setting D3hot causes hang, disable power state changes */
 	writel(0, pcie->reg_base + POWER_STATE_CHANGE_CTRL);
 
 	// i_cfg_5 register DLUC(Disable Link Upconfigure Capability) field set to 0
