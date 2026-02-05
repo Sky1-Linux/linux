@@ -8,11 +8,13 @@
  * Copyright 2024 Cix Technology Group Co., Ltd.
  */
 
+#include <linux/cpumask.h>
 #include <linux/device.h>
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <linux/cix/cix_cpu_ipa.h>
 #include <asm/cpu.h>
 
 #define REG_OFFSET 0x40
@@ -58,6 +60,44 @@ static int cix_get_dynamic_power(int cpu)
 
 	return readl(&info->dynamic_power);
 }
+
+/**
+ * cix_get_static_power_cpus - Get total static power for a set of CPUs
+ * @cpus: CPU mask
+ *
+ * Returns total static (leakage) power in milliwatts for the specified CPUs.
+ * Used by cpufreq_cooling for accurate power accounting.
+ */
+int cix_get_static_power_cpus(const struct cpumask *cpus)
+{
+	int cpu;
+	int total_power = 0;
+
+	for_each_cpu(cpu, cpus)
+		total_power += cix_get_static_power(cpu);
+
+	return total_power;
+}
+EXPORT_SYMBOL_GPL(cix_get_static_power_cpus);
+
+/**
+ * cix_get_dynamic_power_cpus - Get total dynamic power for a set of CPUs
+ * @cpus: CPU mask
+ *
+ * Returns total dynamic power in milliwatts for the specified CPUs.
+ * Used by cpufreq_cooling for accurate power accounting.
+ */
+int cix_get_dynamic_power_cpus(const struct cpumask *cpus)
+{
+	int cpu;
+	int total_power = 0;
+
+	for_each_cpu(cpu, cpus)
+		total_power += cix_get_dynamic_power(cpu);
+
+	return total_power;
+}
+EXPORT_SYMBOL_GPL(cix_get_dynamic_power_cpus);
 
 /* Sysfs interface for power monitoring */
 static ssize_t cpu_power_show(struct device *dev,
