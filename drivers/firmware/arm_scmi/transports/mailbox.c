@@ -12,6 +12,7 @@
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
 #include <linux/slab.h>
 
 #include "../common.h"
@@ -82,6 +83,13 @@ static bool mailbox_chan_available(struct device_node *of_node, int idx)
 	int num_mb;
 
 	/*
+	 * In ACPI mode of_node is NULL; channel availability will be fully
+	 * validated later in mailbox_chan_validate() using _DSD properties.
+	 */
+	if (!of_node)
+		return true;
+
+	/*
 	 * Just check if bidirrectional channels are involved, and check the
 	 * index accordingly; proper full validation will be made later
 	 * in mailbox_chan_setup().
@@ -112,14 +120,42 @@ static bool mailbox_chan_available(struct device_node *of_node, int idx)
  *
  * Return: 0 on Success or error
  */
+static int fwnode_count_references(struct fwnode_handle *fwnode,
+				   const char *prop, unsigned int nargs)
+{
+	struct fwnode_reference_args args;
+	int count = 0;
+
+	while (!fwnode_property_get_reference_args(fwnode, prop, NULL,
+						   nargs, count, &args)) {
+		fwnode_handle_put(args.fwnode);
+		count++;
+	}
+	return count;
+}
+
 static int mailbox_chan_validate(struct device *cdev, int *a2p_rx_chan,
 				 int *p2a_chan, int *p2a_rx_chan)
 {
 	int num_mb, num_sh, ret = 0;
 	struct device_node *np = cdev->of_node;
 
-	num_mb = of_count_phandle_with_args(np, "mboxes", "#mbox-cells");
-	num_sh = of_count_phandle_with_args(np, "shmem", NULL);
+	if (np) {
+		num_mb = of_count_phandle_with_args(np, "mboxes",
+						    "#mbox-cells");
+		num_sh = of_count_phandle_with_args(np, "shmem", NULL);
+	} else {
+		struct fwnode_handle *fwnode = dev_fwnode(cdev);
+
+		/*
+		 * In ACPI mode, count mailbox and shmem references from
+		 * _DSD properties.  Each mbox reference has one integer
+		 * argument (the channel index), shmem references are bare.
+		 */
+		num_mb = fwnode_count_references(fwnode, "mboxes", 1);
+		num_sh = fwnode_count_references(fwnode, "shmem", 0);
+	}
+
 	dev_dbg(cdev, "Found %d mboxes and %d shmems !\n", num_mb, num_sh);
 
 	/* Bail out if mboxes and shmem descriptors are inconsistent */
@@ -127,20 +163,21 @@ static int mailbox_chan_validate(struct device *cdev, int *a2p_rx_chan,
 	    (num_mb == 1 && num_sh != 1) || (num_mb == 3 && num_sh != 2) ||
 	    (num_mb == 4 && num_sh != 2)) {
 		dev_warn(cdev,
-			 "Invalid channel descriptor for '%pOF' - mbs:%d  shm:%d\n",
-			 np, num_mb, num_sh);
+			 "Invalid channel descriptor - mbs:%d  shm:%d\n",
+			 num_mb, num_sh);
 		return -EINVAL;
 	}
 
 	/* Bail out if provided shmem descriptors do not refer distinct areas  */
-	if (num_sh > 1) {
+	if (np && num_sh > 1) {
 		struct device_node *np_tx __free(device_node) =
 					of_parse_phandle(np, "shmem", 0);
 		struct device_node *np_rx __free(device_node) =
 					of_parse_phandle(np, "shmem", 1);
 
 		if (!np_tx || !np_rx || np_tx == np_rx) {
-			dev_warn(cdev, "Invalid shmem descriptor for '%pOF'\n", np);
+			dev_warn(cdev, "Invalid shmem descriptor for '%pOF'\n",
+				 np);
 			ret = -EINVAL;
 		}
 	}
