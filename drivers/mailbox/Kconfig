@@ -362,7 +362,7 @@ config THEAD_TH1520_MBOX
 config CIX_MBOX
         bool "CIX Mailbox"
         depends on ARCH_CIX || COMPILE_TEST
-        depends on OF
+        depends on OF || ACPI
         help
           Mailbox implementation for CIX IPC system. The controller supports
           11 mailbox channels with different operating mode and every channel
