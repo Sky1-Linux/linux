@@ -95,6 +95,14 @@ static void cdns_gpio_irq_mask(struct irq_data *d)
 	gpiochip_disable_irq(chip, irqd_to_hwirq(d));
 }
 
+static void cdns_gpio_irq_ack(struct irq_data *d)
+{
+	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
+	struct cdns_gpio_chip *cgpio = gpiochip_get_data(chip);
+
+	iowrite32(BIT(d->hwirq), cgpio->regs + CDNS_GPIO_IRQ_STATUS);
+}
+
 static void cdns_gpio_irq_unmask(struct irq_data *d)
 {
 	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
@@ -120,18 +128,23 @@ static int cdns_gpio_irq_set_type(struct irq_data *d, unsigned int type)
 	switch (type) {
 	case IRQ_TYPE_EDGE_RISING:
 		int_value |= mask;
+		irq_set_handler_locked(d, handle_edge_irq);
 		break;
 	case IRQ_TYPE_EDGE_FALLING:
+		irq_set_handler_locked(d, handle_edge_irq);
 		break;
 	case IRQ_TYPE_EDGE_BOTH:
 		int_any_edge |= mask;
+		irq_set_handler_locked(d, handle_edge_irq);
 		break;
 	case IRQ_TYPE_LEVEL_HIGH:
 		int_type |= mask;
 		int_value |= mask;
+		irq_set_handler_locked(d, handle_level_irq);
 		break;
 	case IRQ_TYPE_LEVEL_LOW:
 		int_type |= mask;
+		irq_set_handler_locked(d, handle_level_irq);
 		break;
 	default:
 		return -EINVAL;
@@ -144,6 +157,11 @@ static int cdns_gpio_irq_set_type(struct irq_data *d, unsigned int type)
 	return 0;
 }
 
+/*
+ * Called under irq_desc lock; wake_active is only consumed during
+ * suspend/shutdown after all wake setup is complete, so no additional
+ * locking is needed for this u32.
+ */
 static int cdns_gpio_irq_set_wake(struct irq_data *d, unsigned int enable)
 {
 	struct gpio_chip *chip = irq_data_get_irq_chip_data(d);
@@ -179,6 +197,7 @@ static void cdns_gpio_irq_handler(struct irq_desc *desc)
 
 static const struct irq_chip cdns_gpio_irqchip = {
 	.name		= "cdns-gpio",
+	.irq_ack	= cdns_gpio_irq_ack,
 	.irq_mask	= cdns_gpio_irq_mask,
 	.irq_unmask	= cdns_gpio_irq_unmask,
 	.irq_set_type	= cdns_gpio_irq_set_type,
@@ -202,6 +221,10 @@ static void cdns_gpio_save_regs(struct cdns_gpio_chip *cgpio)
 
 static void cdns_gpio_restore_regs(struct cdns_gpio_chip *cgpio)
 {
+	/* Disable all IRQs before restore to prevent spurious firing */
+	iowrite32(GENMASK(cgpio->gen_gc.gc.ngpio - 1, 0),
+		  cgpio->regs + CDNS_GPIO_IRQ_DIS);
+
 	iowrite32(cgpio->saved_regs.bypass_mode, cgpio->regs + CDNS_GPIO_BYPASS_MODE);
 	iowrite32(cgpio->saved_regs.direction_mode, cgpio->regs + CDNS_GPIO_DIRECTION_MODE);
 	iowrite32(cgpio->saved_regs.output_en, cgpio->regs + CDNS_GPIO_OUTPUT_EN);
@@ -209,6 +232,7 @@ static void cdns_gpio_restore_regs(struct cdns_gpio_chip *cgpio)
 	iowrite32(cgpio->saved_regs.irq_type, cgpio->regs + CDNS_GPIO_IRQ_TYPE);
 	iowrite32(cgpio->saved_regs.irq_value, cgpio->regs + CDNS_GPIO_IRQ_VALUE);
 	iowrite32(cgpio->saved_regs.irq_any_edge, cgpio->regs + CDNS_GPIO_IRQ_ANY_EDGE);
+	/* IRQ_EN is write-to-set: re-enable only previously enabled IRQs */
 	iowrite32(~cgpio->saved_regs.irq_en, cgpio->regs + CDNS_GPIO_IRQ_EN);
 }
 
@@ -375,8 +399,12 @@ static int cdns_gpio_probe(struct platform_device *pdev)
 	irq = platform_get_irq_optional(pdev, 0);
 	if (irq > 0) {
 		struct gpio_irq_chip *girq;
+		struct irq_data *irq_data;
 
-		cgpio->hw_irq = irq;
+		/* Store GIC hardware IRQ for PDC wake SMC calls */
+		irq_data = irq_get_irq_data(irq);
+		if (irq_data)
+			cgpio->hw_irq = irq_data->hwirq;
 
 		girq = &cgpio->gen_gc.gc.irq;
 		gpio_irq_chip_set_chip(girq, &cdns_gpio_irqchip);
@@ -394,6 +422,14 @@ static int cdns_gpio_probe(struct platform_device *pdev)
 		girq->handler = handle_bad_irq;
 	}
 
+	/*
+	 * Disable all IRQs and clear pending status before registering
+	 * the chip, to prevent IRQ storms through handle_bad_irq before
+	 * consumers have configured their IRQ types.
+	 */
+	iowrite32(GENMASK(num_gpios - 1, 0), cgpio->regs + CDNS_GPIO_IRQ_DIS);
+	ioread32(cgpio->regs + CDNS_GPIO_IRQ_STATUS);
+
 	ret = devm_gpiochip_add_data(&pdev->dev, &cgpio->gen_gc.gc, cgpio);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Could not register gpiochip, %d\n", ret);
@@ -406,9 +442,6 @@ static int cdns_gpio_probe(struct platform_device *pdev)
 	iowrite32(GENMASK(num_gpios - 1, 0),
 		  cgpio->regs + CDNS_GPIO_OUTPUT_EN);
 	iowrite32(0, cgpio->regs + CDNS_GPIO_BYPASS_MODE);
-
-	/* Disable all IRQs initially */
-	iowrite32(GENMASK(num_gpios - 1, 0), cgpio->regs + CDNS_GPIO_IRQ_DIS);
 
 	platform_set_drvdata(pdev, cgpio);
 	return 0;
