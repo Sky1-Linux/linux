@@ -117,7 +117,7 @@ struct cdnsp_sky1 {
 	bool u3_disable;
 	bool ssp_disable;
 	int axi_bmax_value;
-	struct gpio_desc * oc_gpio;
+	struct gpio_desc *oc_gpio;
 };
 
 #endif /* __LINUX_CDNSP_SKY1_H */
