@@ -633,7 +633,25 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	/* Note: mainline only supports platform_suspend, not platform_reset/platform_u3_disable */
 	cdns_sky1_pdata->platform_suspend = cdns_sky1_platform_suspend;
-	cdns_sky1_pdata->quirks = CDNS3_DEFAULT_PM_RUNTIME_ALLOW;
+
+	/*
+	 * Only enable runtime PM D3 for OTG (USB-C) controllers where the
+	 * rts5453 PD controller provides out-of-band wake on device plug.
+	 * Host-only (USB-A) controllers cannot generate PME from D3, so
+	 * they must stay active for reliable hot-plug detection.
+	 */
+	{
+		struct device_node *child;
+
+		for_each_child_of_node(node, child) {
+			if (of_property_read_bool(child, "usb-role-switch")) {
+				cdns_sky1_pdata->quirks =
+					CDNS3_DEFAULT_PM_RUNTIME_ALLOW;
+				of_node_put(child);
+				break;
+			}
+		}
+	}
 	if (!ACPI_COMPANION(dev)) {
 		cdns_sky1_auxdata->platform_data = cdns_sky1_pdata;
 		ret = of_platform_populate(node, NULL, cdns_sky1_auxdata, dev);

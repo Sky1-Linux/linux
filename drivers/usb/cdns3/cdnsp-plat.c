@@ -159,11 +159,13 @@ static int cdnsp_plat_probe(struct platform_device *pdev)
 		pm_runtime_forbid(dev);
 
 	/*
-	 * The controller needs less time between bus and controller suspend,
-	 * and we also needs a small delay to avoid frequently entering low
-	 * power mode.
+	 * Allow enough time for USB3 link training and hub port polling
+	 * before entering low power mode. USB3 SuperSpeed link training
+	 * can take hundreds of milliseconds, and the hub driver polls
+	 * at ~256ms intervals. Must be shorter than the platform poll
+	 * interval (1s) to allow D3 between polls for power savings.
 	 */
-	pm_runtime_set_autosuspend_delay(dev, 20);
+	pm_runtime_set_autosuspend_delay(dev, 200);
 	pm_runtime_mark_last_busy(dev);
 	pm_runtime_use_autosuspend(dev);
 
