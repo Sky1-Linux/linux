@@ -258,10 +258,23 @@ static void __iomem *shmem_acpi_setup_iomap(struct scmi_chan_info *cinfo,
 	}
 
 	acpi_dev_free_resource_list(&res_list);
-	fwnode_handle_put(args.fwnode);
 
-	if (!IS_ERR(addr))
-		*ops = &shmem_io_ops_default;
+	if (!IS_ERR(addr)) {
+		u32 reg_io_width = 4;
+
+		fwnode_property_read_u32(args.fwnode,
+					"reg-io-width", &reg_io_width);
+		switch (reg_io_width) {
+		case 4:
+			*ops = &shmem_io_ops32;
+			break;
+		default:
+			*ops = &shmem_io_ops_default;
+			break;
+		}
+	}
+
+	fwnode_handle_put(args.fwnode);
 
 	return addr;
 }

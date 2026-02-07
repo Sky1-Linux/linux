@@ -174,6 +174,9 @@ struct scmi_info {
 };
 
 #define handle_to_scmi_info(h)	container_of(h, struct scmi_info, handle)
+
+/* Sentinel stored in active_protocols IDR for ACPI-enumerated protocols */
+#define SCMI_NO_DT_NODE		((struct device_node *)0x1)
 #define tx_minfo_to_scmi_info(h) container_of(h, struct scmi_info, tx_minfo)
 #define bus_nb_to_scmi_info(nb)	container_of(nb, struct scmi_info, bus_nb)
 #define req_nb_to_scmi_info(nb)	container_of(nb, struct scmi_info, dev_req_nb)
@@ -2663,6 +2666,18 @@ static int scmi_chan_setup(struct scmi_info *info, struct device_node *of_node,
 	idx = tx ? 0 : 1;
 	idr = tx ? &info->tx_idr : &info->rx_idr;
 
+	/*
+	 * ACPI: no DT children describe per-protocol channels.
+	 * All non-base protocols share the base transport channel,
+	 * mirroring the DT fallback when children lack own mboxes.
+	 */
+	if (!of_node && prot_id != SCMI_PROTOCOL_BASE) {
+		cinfo = idr_find(idr, SCMI_PROTOCOL_BASE);
+		if (unlikely(!cinfo))
+			return -EINVAL;
+		goto idr_alloc;
+	}
+
 	if (!info->desc->ops->chan_available(of_node, idx)) {
 		cinfo = idr_find(idr, SCMI_PROTOCOL_BASE);
 		if (unlikely(!cinfo)) /* Possible only if platform has no Rx */
@@ -2871,6 +2886,8 @@ static int scmi_device_request_notifier(struct notifier_block *nb,
 	np = idr_find(&info->active_protocols, id_table->protocol_id);
 	if (!np)
 		return NOTIFY_DONE;
+	if (np == SCMI_NO_DT_NODE)
+		np = NULL;
 
 	dev_dbg(info->dev, "%sRequested device (%s) for protocol 0x%x\n",
 		action == SCMI_BUS_NOTIFY_DEVICE_REQUEST ? "" : "UN-",
@@ -3273,6 +3290,38 @@ static int scmi_probe(struct platform_device *pdev)
 		scmi_create_protocol_devices(child, info, prot_id, NULL);
 	}
 
+	/*
+	 * ACPI fallback: no DT children to iterate. Enumerate all
+	 * protocols reported by firmware via base protocol discovery.
+	 */
+	if (!np) {
+		int i;
+
+		for (i = 0; i < info->version.num_protocols; i++) {
+			u8 prot_id = info->protocols_imp[i];
+
+			if (!FIELD_FIT(MSG_PROTOCOL_ID_MASK, prot_id))
+				continue;
+
+			ret = scmi_txrx_setup(info, NULL, prot_id);
+			if (ret)
+				continue;
+
+			ret = idr_alloc(&info->active_protocols,
+					SCMI_NO_DT_NODE,
+					prot_id, prot_id + 1, GFP_KERNEL);
+			if (ret != prot_id) {
+				dev_err(dev,
+					"SCMI protocol %d already activated. Skip\n",
+					prot_id);
+				continue;
+			}
+
+			scmi_create_protocol_devices(NULL, info, prot_id,
+						     NULL);
+		}
+	}
+
 	return 0;
 
 notification_exit:
@@ -3316,7 +3365,8 @@ static void scmi_remove(struct platform_device *pdev)
 	mutex_unlock(&info->protocols_mtx);
 
 	idr_for_each_entry(&info->active_protocols, child, id)
-		of_node_put(child);
+		if (child != SCMI_NO_DT_NODE)
+			of_node_put(child);
 	idr_destroy(&info->active_protocols);
 
 	blocking_notifier_chain_unregister(&scmi_requested_devices_nh,
