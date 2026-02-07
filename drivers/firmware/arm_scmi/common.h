@@ -495,6 +495,9 @@ static int __tag##_probe(struct platform_device *pdev)			       \
 		return -ENOMEM;						       \
 									       \
 	device_set_of_node_from_dev(&spdev->dev, dev);			       \
+	/* ACPI: propagate fwnode when no DT node is present */		       \
+	if (!spdev->dev.fwnode)						       \
+		spdev->dev.fwnode = dev_fwnode(dev);			       \
 									       \
 	strans.supplier = dev;						       \
 	memcpy(&strans.desc, &(__desc), sizeof(strans.desc));		       \

@@ -82,10 +82,6 @@ static bool mailbox_chan_available(struct device_node *of_node, int idx)
 {
 	int num_mb;
 
-	/*
-	 * In ACPI mode of_node is NULL; channel availability will be fully
-	 * validated later in mailbox_chan_validate() using _DSD properties.
-	 */
 	if (!of_node)
 		return true;
 
