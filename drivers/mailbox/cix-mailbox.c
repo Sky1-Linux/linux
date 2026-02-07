@@ -562,9 +562,21 @@ static int cix_mbox_probe(struct platform_device *pdev)
 
 	priv->dev = dev;
 
-	priv->base = devm_platform_ioremap_resource(pdev, 0);
-	if (IS_ERR(priv->base))
-		return PTR_ERR(priv->base);
+	{
+		/*
+		 * Use devm_ioremap() instead of devm_ioremap_resource()
+		 * because SCMI shared memory regions (CIXHA005) overlap the
+		 * base of mailbox MMIO regions, causing -EBUSY under ACPI.
+		 */
+		struct resource *res;
+
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+		if (!res)
+			return -EINVAL;
+		priv->base = devm_ioremap(dev, res->start, resource_size(res));
+		if (!priv->base)
+			return -ENOMEM;
+	}
 
 	priv->irq = platform_get_irq(pdev, 0);
 	if (priv->irq < 0)

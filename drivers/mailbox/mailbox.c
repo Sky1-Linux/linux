@@ -405,8 +405,21 @@ struct mbox_chan *mbox_request_channel(struct mbox_client *cl, int index)
 		return ERR_PTR(-ENODEV);
 	}
 
-	ret = fwnode_property_get_reference_args(fwnode, "mboxes", "#mbox-cells",
-						 0, index, &fwspec);
+	if (is_of_node(fwnode)) {
+		ret = fwnode_property_get_reference_args(fwnode, "mboxes",
+							"#mbox-cells", 0,
+							index, &fwspec);
+	} else {
+		/*
+		 * ACPI: provider devices don't have a '#mbox-cells' property,
+		 * so skip the nargs_prop lookup and auto-detect integer
+		 * arguments following each reference in the package.
+		 */
+		ret = fwnode_property_get_reference_args(fwnode, "mboxes",
+							NULL,
+							NR_FWNODE_REFERENCE_ARGS,
+							index, &fwspec);
+	}
 	if (ret) {
 		dev_err(dev, "%s: can't parse \"%s\" property\n", __func__, "mboxes");
 		return ERR_PTR(ret);
