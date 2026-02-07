@@ -321,6 +321,27 @@ static int _pci_assign_resource(struct pci_dev *dev, int resno,
 	return ret;
 }
 
+/*
+ * Check whether I/O port assignment failures are expected because the
+ * host bridge has no I/O windows at all (common on ARM64/RISC-V where
+ * PCI I/O is optional and many bridges don't support I/O forwarding).
+ */
+static bool pci_io_failure_expected(struct pci_dev *dev, struct resource *res)
+{
+	struct pci_host_bridge *bridge;
+	struct resource_entry *entry;
+
+	if (!(res->flags & IORESOURCE_IO))
+		return false;
+
+	bridge = pci_find_host_bridge(dev->bus);
+	resource_list_for_each_entry(entry, &bridge->windows)
+		if (entry->res->flags & IORESOURCE_IO)
+			return false;
+
+	return true;
+}
+
 int pci_assign_resource(struct pci_dev *dev, int resno)
 {
 	struct resource *res = pci_resource_n(dev, resno);
@@ -348,12 +369,22 @@ int pci_assign_resource(struct pci_dev *dev, int resno)
 	 * working, which is better than just leaving it disabled.
 	 */
 	if (ret < 0) {
-		pci_info(dev, "%s %pR: can't assign; no space\n", res_name, res);
+		if (pci_io_failure_expected(dev, res))
+			pci_dbg(dev, "%s %pR: can't assign; no space\n",
+				res_name, res);
+		else
+			pci_info(dev, "%s %pR: can't assign; no space\n",
+				 res_name, res);
 		ret = pci_revert_fw_address(res, dev, resno, size);
 	}
 
 	if (ret < 0) {
-		pci_info(dev, "%s %pR: failed to assign\n", res_name, res);
+		if (pci_io_failure_expected(dev, res))
+			pci_dbg(dev, "%s %pR: failed to assign\n",
+				res_name, res);
+		else
+			pci_info(dev, "%s %pR: failed to assign\n",
+				 res_name, res);
 		return ret;
 	}
 
