@@ -2,3 +2,4 @@
 obj-$(CONFIG_CIX_SKY1_SOCINFO)	+= sky1-socinfo.o
 obj-$(CONFIG_CIX_DDR_LP)	+= cix-ddr-lp.o
 obj-$(CONFIG_CIX_BUS_PERF)	+= cix-bus-perf.o
+obj-$(CONFIG_CIX_ACPI_RESOURCE_LOOKUP)	+= cix-acpi-resource-lookup.o
