@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
+#include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <linux/of_platform.h>
@@ -27,6 +28,15 @@
 #include "../host/xhci.h"
 #include "../host/xhci-plat.h"
 #include "cdnsp-sky1.h"
+
+/*
+ * Serialize drd_init across all instances to avoid overwhelming the
+ * SCMI mailbox channel.  Each controller's drd_init disables and
+ * re-enables 4 clocks via SCMI — with 10 controllers probing in
+ * parallel that's 80+ SCMI messages competing for a single shared
+ * mailbox, causing timeouts and SErrors on already-clocked hardware.
+ */
+static DEFINE_MUTEX(cdnsp_sky1_init_lock);
 
 static const char *cix_usb_clk_names[CIX_USB_CLK_NUM] = {
 		"sof_clk", "usb_aclk", "lpm_clk", "usb_pclk"
@@ -633,7 +643,9 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
 		}
 	}
 
+	mutex_lock(&cdnsp_sky1_init_lock);
 	ret = cdnsp_sky1_drd_init(data);
+	mutex_unlock(&cdnsp_sky1_init_lock);
 	if (ret == -ETIMEDOUT)
 		return -EPROBE_DEFER;
 	else if (ret)
