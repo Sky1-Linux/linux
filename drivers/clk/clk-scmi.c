@@ -7,6 +7,7 @@
 
 #include <linux/bits.h>
 #include <linux/clk-provider.h>
+#include <linux/clkdev.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/of.h>
@@ -495,8 +496,26 @@ static int scmi_clocks_probe(struct scmi_device *sdev)
 		}
 	}
 
-	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
-					   clk_data);
+	if (np)
+		return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
+						   clk_data);
+
+	/* ACPI: register each clock via clkdev for global lookup */
+	for (idx = 0; idx < count; idx++) {
+		char con_id[20];
+
+		if (!hws[idx])
+			continue;
+
+		snprintf(con_id, sizeof(con_id), "scmi-clk-%d", idx);
+		err = devm_clk_hw_register_clkdev(dev, hws[idx], con_id, NULL);
+		if (err)
+			dev_warn(dev,
+				 "Failed to register clkdev for clock %d\n",
+				 idx);
+	}
+
+	return 0;
 }
 
 static const struct scmi_device_id scmi_id_table[] = {
