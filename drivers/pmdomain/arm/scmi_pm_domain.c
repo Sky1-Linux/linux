@@ -89,6 +89,11 @@ static int scmi_pm_domain_probe(struct scmi_device *sdev)
 		return num_domains;
 	}
 
+	if (!np) {
+		dev_dbg(dev, "no DT node, skipping genpd registration\n");
+		return 0;
+	}
+
 	scmi_pd = devm_kcalloc(dev, num_domains, sizeof(*scmi_pd), GFP_KERNEL);
 	if (!scmi_pd)
 		return -ENOMEM;

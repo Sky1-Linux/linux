@@ -672,7 +672,7 @@ static int cix_ipbloq_hda_probe(struct platform_device *pdev)
 	}
 
 	dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
-	if (!pdev->dev.dma_mem)  {
+	if (!pdev->dev.dma_mem && pdev->dev.of_node) {
 		/*
 		 * if dev.dma_mem not allocated
 		 * we should try to get it from dts

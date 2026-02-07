@@ -244,7 +244,7 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 	}
 
 	if (!config)
-		return -ENOMEM;
+		return -ENODEV;
 
 	drvdata->desc.name = devm_kstrdup(&pdev->dev,
 					  config->supply_name,
