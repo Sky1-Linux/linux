@@ -54,6 +54,9 @@ static int sky1_set_mode_by_id(struct device *dev, int mode)
 {
 	struct cdnsp_sky1 *data = dev_get_drvdata(dev);
 
+	if (!data->usb_syscon)
+		return 0;
+
 	return regmap_update_bits(data->usb_syscon,
 			sky1_usb_signals[data->id].offset,
 			GENMASK(sky1_usb_signals[data->id].bit+1,
@@ -609,6 +612,26 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
 	data->device_base = sky1_get_addr_by_name(dev, "dev");
 	if (!data->device_base)
 		return PTR_ERR(data->device_base);
+
+	/*
+	 * Pre-validate clocks before drd_init touches hardware.
+	 * drd_init asserts resets and disables clocks before trying
+	 * to re-enable them; if clock lookup fails at that point the
+	 * hardware is left inaccessible, causing SErrors on xHCI probe.
+	 * Validate here so we fail cleanly without touching hardware.
+	 */
+	{
+		int i;
+
+		for (i = 0; i < CIX_USB_CLK_NUM; i++) {
+			struct clk *clk = devm_clk_get(dev,
+						       cix_usb_clk_names[i]);
+			if (IS_ERR(clk))
+				return dev_err_probe(dev, PTR_ERR(clk),
+					"could not get %s clock\n",
+					cix_usb_clk_names[i]);
+		}
+	}
 
 	ret = cdnsp_sky1_drd_init(data);
 	if (ret == -ETIMEDOUT)
