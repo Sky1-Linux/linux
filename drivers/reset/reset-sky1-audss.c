@@ -7,10 +7,12 @@
 
 #include <linux/acpi.h>
 #include <linux/delay.h>
+#include <linux/device/bus.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/reset-controller.h>
 
@@ -104,6 +106,24 @@ static int sky1_audss_reset_probe(struct platform_device *pdev)
 	parent_np = of_get_parent(dev->of_node);
 	regmap = syscon_node_to_regmap(parent_np);
 	of_node_put(parent_np);
+
+	if (IS_ERR(regmap) && has_acpi_companion(dev)) {
+		struct fwnode_handle *fw;
+		struct device *syscon_dev;
+
+		fw = fwnode_find_reference(dev_fwnode(dev), "audss_cru", 0);
+		if (!IS_ERR(fw)) {
+			syscon_dev = bus_find_device_by_fwnode(
+					&platform_bus_type, fw);
+			fwnode_handle_put(fw);
+			if (syscon_dev) {
+				regmap = dev_get_regmap(syscon_dev, NULL);
+				put_device(syscon_dev);
+				if (!regmap)
+					regmap = ERR_PTR(-EPROBE_DEFER);
+			}
+		}
+	}
 
 	if (IS_ERR(regmap))
 		return dev_err_probe(dev, PTR_ERR(regmap),
