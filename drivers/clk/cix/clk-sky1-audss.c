@@ -8,12 +8,15 @@
 #include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
+#include <linux/clkdev.h>
+#include <linux/device/bus.h>
 #include <linux/io.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 
@@ -607,6 +610,87 @@ static const struct dev_pm_ops sky1_audss_clk_pm_ops = {
 				     pm_runtime_force_resume)
 };
 
+/*
+ * Parse the CLKA ACPI table to create clkdev entries mapping audss internal
+ * clocks to their consumer devices. Under ACPI, DT phandle-based clock lookup
+ * isn't available, so consumers (HDA, I2S, DMA, etc.) find their clocks via
+ * clkdev entries instead. The CLKA table is a package of {clk_id, con_id,
+ * consumer_device_ref} entries defined in the DSDT on this device's ACPI node.
+ */
+#ifdef CONFIG_ACPI
+static int sky1_audss_parse_clka(struct device *dev,
+				 struct clk_hw_onecell_data *clk_data)
+{
+	acpi_handle handle = ACPI_HANDLE(dev);
+	struct acpi_buffer output = {ACPI_ALLOCATE_BUFFER, NULL};
+	union acpi_object *out_obj, *entry, *el;
+	acpi_status status;
+	int i, count, registered = 0;
+
+	status = acpi_evaluate_object_typed(handle, "CLKA", NULL, &output,
+					    ACPI_TYPE_PACKAGE);
+	if (ACPI_FAILURE(status))
+		return -ENODEV;
+
+	out_obj = output.pointer;
+	count = out_obj->package.count;
+
+	for (i = 0; i < count; i++) {
+		struct acpi_device *adev;
+		struct clk_hw *hw;
+		unsigned int clk_id;
+		const char *con_id;
+		int ret;
+
+		entry = &out_obj->package.elements[i];
+		if (entry->type != ACPI_TYPE_PACKAGE || entry->package.count < 3)
+			continue;
+
+		el = &entry->package.elements[0];
+		if (el->type != ACPI_TYPE_INTEGER)
+			continue;
+		clk_id = el->integer.value;
+
+		el = &entry->package.elements[1];
+		if (el->type != ACPI_TYPE_STRING)
+			continue;
+		con_id = el->string.pointer;
+		if (!con_id || !con_id[0])
+			con_id = NULL;
+
+		el = &entry->package.elements[2];
+		if (el->type == ACPI_TYPE_LOCAL_REFERENCE)
+			adev = acpi_fetch_acpi_dev(el->reference.handle);
+		else
+			adev = NULL;
+		if (!adev)
+			continue;
+
+		if (clk_id >= clk_data->num)
+			continue;
+		hw = clk_data->hws[clk_id];
+		if (!hw || IS_ERR(hw))
+			continue;
+
+		ret = devm_clk_hw_register_clkdev(dev, hw, con_id,
+						  dev_name(&adev->dev));
+		if (ret) {
+			dev_warn(dev, "CLKA: failed to register %s:%s (clk %u): %d\n",
+				 dev_name(&adev->dev), con_id ?: "", clk_id, ret);
+			continue;
+		}
+
+		dev_dbg(dev, "CLKA: clk %u -> %s:%s\n",
+			clk_id, dev_name(&adev->dev), con_id ?: "");
+		registered++;
+	}
+
+	kfree(output.pointer);
+	dev_info(dev, "CLKA: registered %d clkdev entries\n", registered);
+	return 0;
+}
+#endif
+
 static int sky1_audss_clk_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -625,6 +709,24 @@ static int sky1_audss_clk_probe(struct platform_device *pdev)
 	parent_np = of_get_parent(dev->of_node);
 	priv->regmap = syscon_node_to_regmap(parent_np);
 	of_node_put(parent_np);
+
+	if (IS_ERR(priv->regmap) && has_acpi_companion(dev)) {
+		struct fwnode_handle *fw;
+		struct device *syscon_dev;
+
+		fw = fwnode_find_reference(dev_fwnode(dev), "audss_cru", 0);
+		if (!IS_ERR(fw)) {
+			syscon_dev = bus_find_device_by_fwnode(
+					&platform_bus_type, fw);
+			fwnode_handle_put(fw);
+			if (syscon_dev) {
+				priv->regmap = dev_get_regmap(syscon_dev, NULL);
+				put_device(syscon_dev);
+				if (!priv->regmap)
+					priv->regmap = ERR_PTR(-EPROBE_DEFER);
+			}
+		}
+	}
 
 	if (IS_ERR(priv->regmap))
 		return dev_err_probe(dev, PTR_ERR(priv->regmap),
@@ -729,7 +831,16 @@ static int sky1_audss_clk_probe(struct platform_device *pdev)
 		}
 	}
 
-	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, priv->clk_data);
+	if (has_acpi_companion(dev)) {
+#ifdef CONFIG_ACPI
+		ret = sky1_audss_parse_clka(dev, priv->clk_data);
+#else
+		ret = 0;
+#endif
+	} else {
+		ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get,
+						  priv->clk_data);
+	}
 	if (ret) {
 		dev_err(dev, "failed to add clock provider: %d\n", ret);
 		goto err_rcsu;
