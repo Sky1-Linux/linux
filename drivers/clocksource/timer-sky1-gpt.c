@@ -217,11 +217,17 @@ static int sky1_timer_probe(struct platform_device *pdev)
 		return sky1tm->irq;
 
 	sky1tm->pclk = devm_clk_get_optional_enabled(dev, "apb");
+	if (IS_ERR(sky1tm->pclk) && has_acpi_companion(dev))
+		sky1tm->pclk = devm_clk_get_optional_enabled(dev,
+							"fch_timer_apb_clk");
 	if (IS_ERR(sky1tm->pclk))
 		return dev_err_probe(dev, PTR_ERR(sky1tm->pclk),
 				     "failed to get apb clock\n");
 
 	sky1tm->tclk = devm_clk_get_enabled(dev, "func");
+	if (IS_ERR(sky1tm->tclk) && has_acpi_companion(dev))
+		sky1tm->tclk = devm_clk_get_enabled(dev,
+						     "fch_timer_func_clk");
 	if (IS_ERR(sky1tm->tclk))
 		return dev_err_probe(dev, PTR_ERR(sky1tm->tclk),
 				     "failed to get func clock\n");
