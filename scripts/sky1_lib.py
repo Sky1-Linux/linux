@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Board configurations: DT compatible string → DTS basename / DTB EFI prefix
+# Also maps DMI board_name (from ACPI/SMBIOS) → DT compatible for fallback
 BOARD_DTS: dict[str, str] = {
     "radxa,orion-o6": "sky1-orion-o6",
     "radxa,orion-o6n": "sky1-orion-o6n",
@@ -23,6 +24,12 @@ BOARD_DTB_PREFIX: dict[str, str] = {
     "radxa,orion-o6": "SKY1-ORION-O6",
     "radxa,orion-o6n": "SKY1-ORION-O6N",
     "xunlong,orangepi-6-plus": "SKY1-ORANGEPI-6-PLUS",
+}
+
+DMI_TO_COMPAT: dict[str, str] = {
+    "Radxa Orion O6": "radxa,orion-o6",
+    "Radxa Orion O6N": "radxa,orion-o6n",
+    "OrangePi 6 Plus": "xunlong,orangepi-6-plus",
 }
 
 # Track configuration
@@ -70,12 +77,24 @@ class EFINames:
 
 
 def detect_board() -> Board:
-    """Detect current board from /sys/firmware/devicetree/base/compatible."""
+    """Detect current board from DT compatible string or DMI board_name."""
     compat_path = Path("/sys/firmware/devicetree/base/compatible")
-    if not compat_path.exists():
-        raise RuntimeError("Cannot read /sys/firmware/devicetree/base/compatible")
+    dmi_path = Path("/sys/class/dmi/id/board_name")
 
-    compat = compat_path.read_bytes().split(b"\x00")[0].decode()
+    compat = None
+    if compat_path.exists():
+        compat = compat_path.read_bytes().split(b"\x00")[0].decode()
+    elif dmi_path.exists():
+        board_name = dmi_path.read_text().strip()
+        compat = DMI_TO_COMPAT.get(board_name)
+        if not compat:
+            raise RuntimeError(
+                f"Unknown DMI board '{board_name}'. "
+                f"Known: {', '.join(DMI_TO_COMPAT.keys())}"
+            )
+    else:
+        raise RuntimeError("Cannot detect board: no DT or DMI available")
+
     if compat not in BOARD_DTS:
         known = ", ".join(BOARD_DTS.keys())
         raise RuntimeError(f"Unknown board '{compat}'. Known boards: {known}")
