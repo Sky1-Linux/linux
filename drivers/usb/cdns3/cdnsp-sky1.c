@@ -623,14 +623,29 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
 	if (!data->device_base)
 		return PTR_ERR(data->device_base);
 
-	/*
-	 * Pre-validate clocks before drd_init touches hardware.
-	 * drd_init asserts resets and disables clocks before trying
-	 * to re-enable them; if clock lookup fails at that point the
-	 * hardware is left inaccessible, causing SErrors on xHCI probe.
-	 * Validate here so we fail cleanly without touching hardware.
-	 */
-	{
+	if (ACPI_COMPANION(dev)) {
+		/*
+		 * Under ACPI, firmware already initialized clocks, resets,
+		 * and controller mode.  The xHCI register space is driven
+		 * by the generic xhci-plat driver via PNP0D10 devices.
+		 * Calling drd_init would cycle clocks and assert resets,
+		 * killing xHCI controllers that are already active.
+		 *
+		 * Acquire clock references for PM refcounting and set the
+		 * AXI cache configuration — skip the full hardware reset.
+		 */
+		ret = sky1_usb_clk_enable_all(dev);
+		if (ret)
+			return ret;
+		writel(CIX_USB_AXI_WR_CACHE_VALUE, data->axi_base);
+	} else {
+		/*
+		 * Pre-validate clocks before drd_init touches hardware.
+		 * drd_init asserts resets and disables clocks before trying
+		 * to re-enable them; if clock lookup fails at that point the
+		 * hardware is left inaccessible, causing SErrors on xHCI
+		 * probe.  Validate here so we fail cleanly.
+		 */
 		int i;
 
 		for (i = 0; i < CIX_USB_CLK_NUM; i++) {
@@ -641,15 +656,15 @@ static int cdnsp_sky1_probe(struct platform_device *pdev)
 					"could not get %s clock\n",
 					cix_usb_clk_names[i]);
 		}
-	}
 
-	mutex_lock(&cdnsp_sky1_init_lock);
-	ret = cdnsp_sky1_drd_init(data);
-	mutex_unlock(&cdnsp_sky1_init_lock);
-	if (ret == -ETIMEDOUT)
-		return -EPROBE_DEFER;
-	else if (ret)
-		return ret;
+		mutex_lock(&cdnsp_sky1_init_lock);
+		ret = cdnsp_sky1_drd_init(data);
+		mutex_unlock(&cdnsp_sky1_init_lock);
+		if (ret == -ETIMEDOUT)
+			return -EPROBE_DEFER;
+		else if (ret)
+			return ret;
+	}
 
 	data->oc_gpio = devm_gpiod_get_optional(data->dev, "oc", GPIOD_IN);
 	if (IS_ERR(data->oc_gpio)) {
