@@ -171,6 +171,12 @@ static struct mcfg_fixup mcfg_quirks[] = {
 	ALTRA_ECAM_QUIRK(1, 13),
 	ALTRA_ECAM_QUIRK(1, 14),
 	ALTRA_ECAM_QUIRK(1, 15),
+
+#define SKY1_ECAM(seg, ops) \
+	{ "CIXTEK", "SKY1EDK2", 0x01000101, seg, MCFG_BUS_ANY, ops }
+
+	SKY1_ECAM(0, &sky1_pcie_ecam_ops),
+
 #endif /* ARM64 */
 
 #ifdef CONFIG_LOONGARCH

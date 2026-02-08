@@ -1424,7 +1424,7 @@ static int cix_udphy_probe(struct platform_device *pdev)
 	struct fwnode_handle *child_fn;
 	int id, ret = 0;
 	struct gop_status __iomem *g_status;
-	enum phy_role gop_value;
+	enum phy_role gop_value = USB_ROLE_NONE;
 
 	udphy = devm_kzalloc(dev, sizeof(*udphy), GFP_KERNEL);
 	if (!udphy)
@@ -1476,6 +1476,7 @@ static int cix_udphy_probe(struct platform_device *pdev)
 
 	if (ACPI_COMPANION(dev)) {
 		udphy->phy_reset = false;
+		dev_info(dev, "ACPI boot: skipping PHY reset (firmware-initialized)\n");
 	} else {
 		g_status = ioremap(GOP_STATUS_ADDRESS, GOP_STATUS_SIZE);
 		if (g_status) {
@@ -1498,9 +1499,8 @@ static int cix_udphy_probe(struct platform_device *pdev)
 			}
 			iounmap(g_status);
 		}
+		dev_info(dev, "get phy-status:[%d]%d\n", id, gop_value);
 	}
-
-	dev_info(dev, "get phy-status:[%d]%d\n", id, gop_value);
 	if (udphy->phy_reset) {
 		dev_info(dev, "phy reset\n");
 		reset_control_assert(udphy->reset);
