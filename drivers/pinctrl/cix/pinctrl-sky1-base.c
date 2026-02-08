@@ -5,9 +5,7 @@
 //
 // Author: Jerry Zhu <Jerry.Zhu@cixtech.com>
 //
-// Note: ACPI pinctrl support removed - vendor API not in mainline.
-// This driver supports Device Tree boot only.
-
+#include <linux/acpi.h>
 #include <linux/err.h>
 #include <linux/init.h>
 #include <linux/io.h>
@@ -599,16 +597,22 @@ int sky1_base_pinctrl_probe(struct platform_device *pdev,
 		return ret;
 	}
 
-	/* DT boot only - ACPI not supported in mainline */
-	if (!pdev->dev.of_node) {
-		dev_err(&pdev->dev, "Device Tree required, ACPI not supported\n");
+	if (pdev->dev.of_node) {
+		ret = sky1_pinctrl_probe_dt(pdev, spctl);
+		if (ret) {
+			dev_err(&pdev->dev, "fail to probe dt properties\n");
+			return ret;
+		}
+	} else if (has_acpi_companion(&pdev->dev)) {
+		/*
+		 * Under ACPI, firmware already configured pin muxing.
+		 * Register the controller with no groups/functions so
+		 * GPIO consumers and pin clients can probe successfully.
+		 */
+		dev_info(&pdev->dev, "ACPI mode, using firmware pin configuration\n");
+	} else {
+		dev_err(&pdev->dev, "no firmware data available\n");
 		return -ENODEV;
-	}
-
-	ret = sky1_pinctrl_probe_dt(pdev, spctl);
-	if (ret) {
-		dev_err(&pdev->dev, "fail to probe dt properties\n");
-		return ret;
 	}
 
 	pinctrl_provide_dummies();

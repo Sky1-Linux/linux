@@ -27,6 +27,7 @@
 #include "../../pci.h"
 #include "pcie-cadence.h"
 #include "pci-sky1.h"
+#include "pci-sky1-acpi.h"
 #include "pci-sky1-debugfs.h"
 
 /* CIX-specific Cadence PCIe register bases (not in mainline) */
@@ -1191,26 +1192,24 @@ static int sky1_pcie_parse_mem(struct sky1_pcie *pcie)
 {
 	struct device *dev = pcie->dev;
 	struct platform_device *pdev = to_platform_device(dev);
+	bool is_acpi = !!ACPI_COMPANION(dev);
 	struct resource *res;
 	void __iomem *base;
 	int ret = 0;
 
-	/*rcsu*/
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "rcsu");
-	if (!res) {
-		dev_err(dev, "Parse \"rcsu\" resource err\n");
-		return (-ENXIO);
-	}
-	pcie->rcsu_base = devm_ioremap(dev, res->start, resource_size(res));
-	if (!pcie->rcsu_base) {
-		dev_err(dev, "ioremap failed for resource %pR\n", res);
-		ret = -ENOMEM;
-	}
-	dev_info(dev, "ioremap %s, paddr:%pR, vaddr:%px\n", "rcsu", res,
-		 pcie->rcsu_base);
+	/*
+	 * ACPI CIXH2020 _CRS Memory32Fixed order:
+	 *   [0] controller registers (64K) → "reg"
+	 *   [1] RCSU registers (64K) → "rcsu"
+	 *   [2] ECAM config space (48-64MB) → "cfg"
+	 *   [3] message space (1MB) → "msg"
+	 */
 
 	/*reg - use devm_ioremap to avoid EBUSY from overlapping reservations */
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "reg");
+	if (is_acpi)
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	else
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "reg");
 	if (!res) {
 		dev_err(dev, "Parse \"reg\" resource err\n");
 		return -ENXIO;
@@ -1223,11 +1222,42 @@ static int sky1_pcie_parse_mem(struct sky1_pcie *pcie)
 	pcie->reg_base = base;
 	dev_info(dev, "ioremap %s, paddr:%pR, vaddr:%px\n", "reg", res, base);
 
+	/*rcsu*/
+	if (is_acpi)
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	else
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "rcsu");
+	if (!res) {
+		dev_err(dev, "Parse \"rcsu\" resource err\n");
+		return -ENXIO;
+	}
+	pcie->rcsu_base = devm_ioremap(dev, res->start, resource_size(res));
+	if (!pcie->rcsu_base) {
+		dev_err(dev, "ioremap failed for resource %pR\n", res);
+		ret = -ENOMEM;
+	}
+	dev_info(dev, "ioremap %s, paddr:%pR, vaddr:%px\n", "rcsu", res,
+		 pcie->rcsu_base);
+
+	/*cfg*/
+	if (is_acpi)
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 2);
+	else
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "cfg");
+	if (!res) {
+		dev_err(dev, "Parse \"cfg\" resource err\n");
+		return -ENXIO;
+	}
+	pcie->cfg_res = res;
+
 	/*msg*/
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "msg");
+	if (is_acpi)
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 3);
+	else
+		res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "msg");
 	if (!res) {
 		dev_err(dev, "Parse \"msg\" resource err\n");
-		return (-ENXIO);
+		return -ENXIO;
 	}
 	pcie->msg_res = res;
 	pcie->msg_base = devm_ioremap(dev, res->start, resource_size(res));
@@ -1237,14 +1267,6 @@ static int sky1_pcie_parse_mem(struct sky1_pcie *pcie)
 	}
 	dev_info(dev, "ioremap %s, paddr:%pR, vaddr:%px\n", "msg", res,
 		 pcie->msg_base);
-
-	/*cfg*/
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "cfg");
-	if (!res) {
-		dev_err(dev, "Parse \"cfg\" resource err\n");
-		return (-ENXIO);
-	}
-	pcie->cfg_res = res;
 
 	return ret;
 }
@@ -1332,17 +1354,25 @@ static int sky1_pcie_parse_max_payload(struct sky1_pcie *pcie)
 static int sky1_pcie_parse_clocks(struct sky1_pcie *pcie)
 {
 	struct device *dev = pcie->dev;
+	bool is_acpi = !!ACPI_COMPANION(dev);
 	struct clk *axi_clk, *apb_clk, *refclk;
 	int ret = 0;
 
-	axi_clk = devm_clk_get(dev, "axi_clk");
+	/* Under ACPI, firmware manages clocks (always enabled) */
+	if (is_acpi)
+		axi_clk = devm_clk_get_optional(dev, "axi_clk");
+	else
+		axi_clk = devm_clk_get(dev, "axi_clk");
 	if (IS_ERR(axi_clk)) {
 		ret = PTR_ERR(axi_clk);
 		dev_err(dev, "Failed to get axi_clk\n");
 	}
 	pcie->pcie_axi_clk = axi_clk;
 
-	apb_clk = devm_clk_get(dev, "apb_clk");
+	if (is_acpi)
+		apb_clk = devm_clk_get_optional(dev, "apb_clk");
+	else
+		apb_clk = devm_clk_get(dev, "apb_clk");
 	if (IS_ERR(apb_clk)) {
 		ret = PTR_ERR(apb_clk);
 		dev_err(dev, "Failed to get apb_clk\n");
@@ -1394,6 +1424,20 @@ static void sky1_pcie_parse_ep_pwr_supply(struct sky1_pcie *pcie)
 	}
 }
 
+/*
+ * ACPI GPIO mapping for PERST# in CIXH2020 _CRS.
+ *
+ * CIXH2020 has _DSD properties which causes acpi_can_fallback_to_crs()
+ * to return false.  Register a driver_gpios mapping so "reset-gpios"
+ * resolves to _CRS GpioIo entry 0.
+ */
+static const struct acpi_gpio_params sky1_reset_gpio_params = { 0, 0, false };
+
+static const struct acpi_gpio_mapping sky1_gpio_mappings[] = {
+	{ "reset-gpios", &sky1_reset_gpio_params, 1, ACPI_GPIO_QUIRK_ONLY_GPIOIO },
+	{ },
+};
+
 static int sky1_pcie_parse_reset_gpio(struct sky1_pcie *pcie)
 {
 	struct device *dev = pcie->dev;
@@ -1402,6 +1446,10 @@ static int sky1_pcie_parse_reset_gpio(struct sky1_pcie *pcie)
 
 	if (pcie->plat == PCIE_PLAT_EMU)
 		return ret;
+
+	if (ACPI_COMPANION(dev))
+		acpi_dev_add_driver_gpios(ACPI_COMPANION(dev),
+					  sky1_gpio_mappings);
 
 	gpiodesc = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
 	if (IS_ERR(gpiodesc)) {
@@ -1521,16 +1569,19 @@ static int sky1_pcie_parse_reset_ctrl(struct sky1_pcie *pcie)
 {
 	struct device *dev = pcie->dev;
 	struct reset_control *rst;
-	int ret = 0;
 
-	rst = devm_reset_control_get_exclusive(dev, "pcie_reset");
+	/* Under ACPI, firmware manages resets */
+	if (ACPI_COMPANION(dev))
+		rst = devm_reset_control_get_optional_exclusive(dev, "pcie_reset");
+	else
+		rst = devm_reset_control_get_exclusive(dev, "pcie_reset");
 	if (IS_ERR(rst)) {
-		dev_err(dev, "Failed to get reset gpio\n");
+		dev_err(dev, "Failed to get reset control\n");
 		return PTR_ERR(rst);
 	}
 	pcie->rst = rst;
 
-	return ret;
+	return 0;
 }
 
 static int sky1_pcie_parse_local_irq(struct sky1_pcie *pcie)
@@ -1538,8 +1589,11 @@ static int sky1_pcie_parse_local_irq(struct sky1_pcie *pcie)
 	struct device *dev = pcie->dev;
 	struct platform_device *pdev = to_platform_device(dev);
 
-	/* local (some error statuss) */
-	pcie->local_irq = platform_get_irq_byname(pdev, "local");
+	/* CIXH2020 _CRS Interrupt order: [0]=local, [1..3]=AER */
+	if (ACPI_COMPANION(dev))
+		pcie->local_irq = platform_get_irq(pdev, 0);
+	else
+		pcie->local_irq = platform_get_irq_byname(pdev, "local");
 	if (pcie->local_irq < 0) {
 		dev_err(pcie->dev, "missing local IRQ resource\n");
 		return -EINVAL;
@@ -1552,17 +1606,22 @@ static int sky1_pcie_parse_aer_irq(struct sky1_pcie *pcie)
 {
 	struct device *dev = pcie->dev;
 	struct platform_device *pdev = to_platform_device(dev);
-	struct device_node *np = pdev->dev.of_node;
 
-	pcie->is_aer_uncor_panic = of_property_read_bool(np, "sky1,aer-uncor-panic");
-	/* AER correctable */
-	pcie->aer_c_irq = platform_get_irq_byname(pdev, "aer_c");
+	pcie->is_aer_uncor_panic = device_property_read_bool(dev, "sky1,aer-uncor-panic");
 
-	/* AER uncorrectable fatal*/
-	pcie->aer_f_irq = platform_get_irq_byname(pdev, "aer_f");
-
-	/* AER uncorrectable non fatal*/
-	pcie->aer_nf_irq = platform_get_irq_byname(pdev, "aer_nf");
+	/* CIXH2020 _CRS Interrupt order: [0]=local, [1]=aer_c, [2]=aer_f, [3]=aer_nf */
+	if (ACPI_COMPANION(dev)) {
+		pcie->aer_c_irq = platform_get_irq(pdev, 1);
+		pcie->aer_f_irq = platform_get_irq(pdev, 2);
+		pcie->aer_nf_irq = platform_get_irq(pdev, 3);
+	} else {
+		/* AER correctable */
+		pcie->aer_c_irq = platform_get_irq_byname(pdev, "aer_c");
+		/* AER uncorrectable fatal */
+		pcie->aer_f_irq = platform_get_irq_byname(pdev, "aer_f");
+		/* AER uncorrectable non fatal */
+		pcie->aer_nf_irq = platform_get_irq_byname(pdev, "aer_nf");
+	}
 
 	return 0;
 }
@@ -2539,6 +2598,7 @@ err_ecam_free:
 static int sky1_pcie_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct sky1_pcie_acpi_pdata *acpi_pdata;
 	struct pci_host_bridge *bridge;
 	struct sky1_pcie *pcie;
 	struct sky1_pcie_data *data;
@@ -2549,6 +2609,15 @@ static int sky1_pcie_probe(struct platform_device *pdev)
 	int ret;
 
 	dev_info(dev, "%s starting!\n", __func__);
+
+	/*
+	 * When created by pci-sky1-acpi.c scan handler, the platform
+	 * device has no fwnode (to bypass fw_devlink).  Set the ACPI
+	 * companion here so resource lookups and match data work.
+	 */
+	acpi_pdata = dev_get_platdata(dev);
+	if (acpi_pdata)
+		ACPI_COMPANION_SET(dev, acpi_pdata->adev);
 
 	pcie = devm_kzalloc(dev, sizeof(*pcie), GFP_KERNEL);
 	if (!pcie)

@@ -30,7 +30,6 @@ static const struct acpi_device_id forbidden_id_list[] = {
 	{"PNP0100",  0},	/* Timer */
 	{"PNP0200",  0},	/* AT DMA Controller */
 	{ACPI_SMBUS_MS_HID,  ACPI_ALLOW_WO_RESOURCES},	/* ACPI SMBUS virtual device */
-	{"CIXH2020", 0},	/* CIX Sky1 PCIe controller (handled via PNP0A08) */
 	{ }
 };
 
