@@ -55,6 +55,12 @@ static int sky1_cixh2020_res_filter(struct acpi_resource *ares, void *data)
  * Replicates the key parts of acpi_create_platform_device() but with
  * our resource filter to exclude PCI window resources that can't be
  * claimed by platform_device_add().
+ *
+ * Always returns 1 (handled) — even on failure.  PNP0A08 is already
+ * blocked, so falling through to default ACPI enumeration (return 0)
+ * would create a platform device with fwnode, hitting the fw_devlink
+ * deadlock we're explicitly avoiding.  A stranded controller with an
+ * error log is preferable to a silent hang.
  */
 static int sky1_cixh2020_create_pdev(struct acpi_device *adev)
 {
@@ -71,14 +77,15 @@ static int sky1_cixh2020_create_pdev(struct acpi_device *adev)
 				       sky1_cixh2020_res_filter, NULL);
 	if (count <= 0) {
 		acpi_dev_free_resource_list(&resource_list);
-		dev_warn(&adev->dev, "no usable resources in _CRS\n");
-		return 0;
+		dev_err(&adev->dev, "no usable resources in _CRS, controller stranded\n");
+		return 1; /* claim to prevent default enumeration (fw_devlink) */
 	}
 
 	resources = kcalloc(count, sizeof(*resources), GFP_KERNEL);
 	if (!resources) {
 		acpi_dev_free_resource_list(&resource_list);
-		return -ENOMEM;
+		dev_err(&adev->dev, "resource alloc failed, controller stranded\n");
+		return 1; /* claim to prevent default enumeration (fw_devlink) */
 	}
 
 	i = 0;
@@ -105,9 +112,9 @@ static int sky1_cixh2020_create_pdev(struct acpi_device *adev)
 	kfree(resources);
 
 	if (IS_ERR(pdev)) {
-		dev_err(&adev->dev, "platform device creation failed: %ld\n",
+		dev_err(&adev->dev, "platform device creation failed: %ld, controller stranded\n",
 			PTR_ERR(pdev));
-		return 0;
+		return 1; /* claim to prevent default enumeration (fw_devlink) */
 	}
 
 	dev_info(&adev->dev, "Sky1: created platform device %s (%d resources)\n",
