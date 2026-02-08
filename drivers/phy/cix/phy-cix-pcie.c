@@ -587,10 +587,16 @@ static int cix_pcie_phy_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	phy_provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
-	if (IS_ERR(phy_provider)) {
-		ret = PTR_ERR(phy_provider);
-		return ret;
+	/*
+	 * Only register the OF PHY provider when booting with Device Tree.
+	 * Under ACPI, phy_create_lookup() (called per-child above) is
+	 * sufficient for consumers to find PHYs via phy_get().
+	 */
+	if (dev->of_node) {
+		phy_provider = devm_of_phy_provider_register(dev,
+							     of_phy_simple_xlate);
+		if (IS_ERR(phy_provider))
+			return PTR_ERR(phy_provider);
 	}
 
 	return 0;
