@@ -6371,3 +6371,41 @@ static void pci_mask_replay_timer_timeout(struct pci_dev *pdev)
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_GLI, 0x9750, pci_mask_replay_timer_timeout);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_GLI, 0x9755, pci_mask_replay_timer_timeout);
 #endif
+
+/*
+ * CIX Sky1 Cadence PCIe root ports can't handle D3hot/D3cold power state
+ * transitions or ASPM link state changes.  Under DT boot, pci-sky1
+ * disables power state changes in hardware.  Under ACPI boot, prevent
+ * runtime PM from suspending both the bridges and their downstream
+ * devices, since the Cadence IP link drops on any D-state transition.
+ */
+static void quirk_cadence_bridge_no_d3(struct pci_dev *dev)
+{
+	if (acpi_disabled)
+		return;
+
+	pm_runtime_forbid(&dev->dev);
+	pci_d3cold_disable(dev);
+	pci_disable_link_state(dev, PCIE_LINK_STATE_ALL);
+	pci_info(dev, "disabled D3 and ASPM for Cadence bridge\n");
+}
+DECLARE_PCI_FIXUP_CLASS_FINAL(0x17cd, PCI_ANY_ID,
+			      PCI_CLASS_BRIDGE_PCI, 8,
+			      quirk_cadence_bridge_no_d3);
+
+static void quirk_cadence_endpoint_no_d3(struct pci_dev *dev)
+{
+	struct pci_dev *bridge;
+
+	if (acpi_disabled)
+		return;
+
+	bridge = pci_upstream_bridge(dev);
+	if (!bridge || bridge->vendor != 0x17cd)
+		return;
+
+	pm_runtime_forbid(&dev->dev);
+	pci_info(dev, "disabled runtime PM (behind Cadence bridge)\n");
+}
+DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID,
+			quirk_cadence_endpoint_no_d3);

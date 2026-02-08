@@ -1,0 +1,650 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * ACPI ECAM quirk for CIX Sky1 Cadence PCIe controllers.
+ *
+ * Under ACPI boot, generic ACPI PCI host bridge code creates root bridges
+ * with standard ECAM ops but none of the Cadence controller initialization
+ * that the DT platform driver (pci-sky1.c) performs.  Firmware brings links
+ * up but leaves controllers partially configured — missing RC BAR setup for
+ * I/O windows, missing TLP filtering, and HW power state transitions
+ * enabled.  This causes WiFi SErrors and I/O BAR assignment failures.
+ *
+ * This driver provides custom ECAM ops matched via MCFG quirk (OEM ID
+ * "CIXTEK", Table ID "SKY1EDK2").  The init callback finds the companion
+ * CIXH2020 ACPI device, maps its register banks, quiesces the link,
+ * writes all controller registers (matching pci-sky1.c), and retrains.
+ *
+ * Follows the upstream MCFG quirk pattern: Amazon Graviton (pcie-al.c),
+ * HiSilicon (pcie-hisi.c), Tegra (pcie-tegra194-acpi.c).
+ */
+
+#include <linux/acpi.h>
+#include <linux/delay.h>
+#include <linux/io.h>
+#include <linux/iopoll.h>
+#include <linux/pci.h>
+#include <linux/pci-acpi.h>
+#include <linux/pci-ecam.h>
+#include <linux/sizes.h>
+
+#if defined(CONFIG_ACPI) && defined(CONFIG_PCI_QUIRKS)
+
+/*
+ * Register definitions — values shared with pci-sky1.c.
+ * Keep in sync with the DT driver.
+ */
+
+/* CIX-specific Cadence PCIe IP register bank base */
+#define REG_BANK_BASE			0x1000
+
+/*
+ * RC BAR Configuration Register (CIX Sky1 offset and bit layout).
+ *
+ * Standard Cadence IP has this at CDNS_PCIE_LM_BASE + 0x0300 = 0x1300.
+ * CIX Sky1 has it at 0x4c14 with different bit positions.
+ *
+ * Enables I/O and prefetchable memory bridge windows in Type 1 config
+ * space.  Without this, I/O Base/Limit (offset 0x1C) are hardwired to
+ * zero and the kernel cannot assign I/O BARs.
+ */
+#define SKY1_RC_BAR_CFG			0x4c14
+#define  SKY1_RC_BAR_CFG_PRMBLE		BIT(20)	/* Prefetch MEM enable */
+#define  SKY1_RC_BAR_CFG_PRMBLSI	BIT(21)	/* Prefetch MEM 64-bit */
+#define  SKY1_RC_BAR_CFG_IOBLE		BIT(22)	/* I/O enable */
+#define  SKY1_RC_BAR_CFG_IOBLSI	BIT(23)	/* I/O 32-bit */
+#define SKY1_RC_BAR_CFG_VALUE		(SKY1_RC_BAR_CFG_PRMBLE |	\
+					 SKY1_RC_BAR_CFG_PRMBLSI |	\
+					 SKY1_RC_BAR_CFG_IOBLE |	\
+					 SKY1_RC_BAR_CFG_IOBLSI)
+
+/* IP register bank offsets (relative to controller reg_base) */
+#define SKY1_I_CFG_5			(REG_BANK_BASE + 0x414)
+#define SKY1_I_CFG_7			(REG_BANK_BASE + 0x41c)
+#define SKY1_I_CFG_9			(REG_BANK_BASE + 0x724)
+#define SKY1_DBG_STS_0			(REG_BANK_BASE + 0x420)
+#define SKY1_PWR_STATE_CHANGE_CTRL	(REG_BANK_BASE + 0x1430)
+
+/*
+ * Address Translation Unit registers (Sky1-specific Cadence layout).
+ * Outbound regions at AXI slave offset 0x9000 + 0x1000, stride 0x80.
+ * See pcie-cadence.h CDNS_PCIE_AT_OB_REGION_* macros.
+ */
+#define SKY1_AT_OB_BASE			0xA000
+#define SKY1_AT_OB_STRIDE		0x80
+#define SKY1_AT_OB_CPU_ADDR0(r)	(SKY1_AT_OB_BASE + (r) * SKY1_AT_OB_STRIDE)
+#define SKY1_AT_OB_CPU_ADDR1(r)	(SKY1_AT_OB_BASE + (r) * SKY1_AT_OB_STRIDE + 0x04)
+#define SKY1_AT_OB_DESC0(r)		(SKY1_AT_OB_BASE + (r) * SKY1_AT_OB_STRIDE + 0x08)
+#define SKY1_AT_OB_PCI_ADDR0(r)	(SKY1_AT_OB_BASE + (r) * SKY1_AT_OB_STRIDE + 0x10)
+#define SKY1_AT_OB_PCI_ADDR1(r)	(SKY1_AT_OB_BASE + (r) * SKY1_AT_OB_STRIDE + 0x14)
+#define SKY1_TLP_FILTER			(REG_BANK_BASE + 0x100c)
+
+/* RCSU application register offsets */
+#define APP_STRAP_OFFSET		0x300
+#define APP_STATUS_OFFSET		0x400
+
+/* Per-controller sub-offsets within RCSU strap/status regions */
+#define SUB_OFFSET_X2			0x40
+#define SUB_OFFSET_X1A			0x60
+#define SUB_OFFSET_X1B			0x80
+
+#define STRAP_REG(n)			((n) * 4)
+#define STATUS_REG(n)			((n) * 4)
+
+/* Strap register 1 bits */
+#define LINK_TRAINING_ENABLE		BIT(0)
+
+/* Debug status 0 bits */
+#define LINK_COMPLETE			BIT(0)
+
+/* LTSSM state in status register 0 */
+#define LTSSM_STATE_SHIFT		10
+#define LTSSM_DISABLED			32
+
+/* Controller IDs — from _DSD "sky1,pcie-ctrl-id" property */
+#define CTRL_ID_X8			0
+#define CTRL_ID_X4			1
+#define CTRL_ID_X2			2
+#define CTRL_ID_X1B			3
+#define CTRL_ID_X1A			4
+
+/* Link training timing */
+#define LINK_POLL_US			10000
+#define LINK_TIMEOUT_US			1000000
+#define LINK_WAIT_AFTER_MS		100	/* PCIe r6.0 §6.6.1 */
+
+/* ATU outbound region types (bits [28:24] of DESC0) */
+#define OB_TYPE_MEM			0x0
+#define OB_TYPE_IO			0x2
+
+/* CTRL0 bits — must be set in RC mode for MEM/IO regions */
+#define OB_CTRL0_SUPPLY_BUS		BIT(26)
+#define OB_CTRL0_SUPPLY_DEV_FN		BIT(25)
+
+/* First free ATU region (firmware uses 0=CFG1, 1=CFG0) */
+#define ATU_REGION_MEM			2
+#define ATU_REGION_IO			3
+
+/* Additional ATU register offsets within each 0x80-byte region */
+#define SKY1_AT_OB_DESC1(r)	(SKY1_AT_OB_BASE + (r) * SKY1_AT_OB_STRIDE + 0x0c)
+#define SKY1_AT_OB_CTRL0(r)	(SKY1_AT_OB_BASE + (r) * SKY1_AT_OB_STRIDE + 0x18)
+
+/* --- Private data --- */
+
+struct sky1_pcie_acpi {
+	void __iomem *reg_base;		/* Controller registers (64K) */
+	void __iomem *rcsu_base;	/* RCSU registers (64K) */
+	void __iomem *strap_base;	/* rcsu_base + strap sub-offset */
+	void __iomem *status_base;	/* rcsu_base + status sub-offset */
+	u32 ctrl_id;
+};
+
+/* --- PCI capability list walkers --- */
+
+/*
+ * Walk the standard PCI capability linked list in the controller
+ * register bank.  Matches sky1_pcie_find_capability() in pci-sky1.c.
+ */
+static u8 sky1_find_cap(void __iomem *base, u8 cap_id)
+{
+	u8 pos;
+	u32 reg;
+	int ttl = 48;
+
+	reg = readl(base + PCI_CAPABILITY_LIST);
+	pos = reg & 0xff;
+
+	while (pos && ttl--) {
+		reg = readl(base + pos);
+		if ((reg & 0xff) == cap_id)
+			return pos;
+		pos = (reg >> 8) & 0xff;
+	}
+
+	return 0;
+}
+
+/*
+ * Walk the PCI extended capability list in the controller register bank.
+ * Matches sky1_pcie_find_ext_capability() in pci-sky1.c.
+ */
+static u16 sky1_find_ext_cap(void __iomem *base, u8 cap_id)
+{
+	int pos = PCI_CFG_SPACE_SIZE;
+	int ttl = (PCI_CFG_SPACE_EXP_SIZE - PCI_CFG_SPACE_SIZE) / 8;
+	u32 header;
+
+	header = readl(base + pos);
+	if (!header)
+		return 0;
+
+	while (ttl--) {
+		if (PCI_EXT_CAP_ID(header) == cap_id)
+			return pos;
+		pos = PCI_EXT_CAP_NEXT(header);
+		if (pos < PCI_CFG_SPACE_SIZE)
+			break;
+		header = readl(base + pos);
+	}
+
+	return 0;
+}
+
+/* --- Strap/status base calculation --- */
+
+/*
+ * Calculate strap_base and status_base from rcsu_base and controller ID.
+ * Controllers sharing a PHY group use sub-offsets within the RCSU
+ * register space.  Matches sky1_pcie_init_bases() in pci-sky1.c.
+ */
+static void sky1_init_bases(struct sky1_pcie_acpi *pcie)
+{
+	u32 sub;
+
+	switch (pcie->ctrl_id) {
+	case CTRL_ID_X1B:	sub = SUB_OFFSET_X1B; break;
+	case CTRL_ID_X1A:	sub = SUB_OFFSET_X1A; break;
+	case CTRL_ID_X2:	sub = SUB_OFFSET_X2;  break;
+	default:		sub = 0;              break;
+	}
+
+	pcie->strap_base  = pcie->rcsu_base + APP_STRAP_OFFSET  + sub;
+	pcie->status_base = pcie->rcsu_base + APP_STATUS_OFFSET + sub;
+}
+
+/* --- Link management --- */
+
+static bool sky1_link_is_up(struct sky1_pcie_acpi *pcie)
+{
+	return readl(pcie->reg_base + SKY1_DBG_STS_0) & LINK_COMPLETE;
+}
+
+/*
+ * Quiesce the link by clearing LINK_TRAINING_ENABLE in STRAP_REG(1).
+ * Wait for LTSSM to reach the DISABLED state.
+ */
+static void sky1_link_stop(struct sky1_pcie_acpi *pcie, struct device *dev)
+{
+	u32 val;
+	int ret;
+
+	val = readl(pcie->strap_base + STRAP_REG(1));
+	val &= ~LINK_TRAINING_ENABLE;
+	writel(val, pcie->strap_base + STRAP_REG(1));
+
+	ret = readl_poll_timeout(pcie->status_base + STATUS_REG(0), val,
+				 (((val >> LTSSM_STATE_SHIFT) & 0x3f) ==
+				  LTSSM_DISABLED),
+				 1000, 100000);
+	if (ret)
+		dev_dbg(dev, "LTSSM did not reach DISABLED (0x%x)\n", val);
+}
+
+/*
+ * Retrain the link by setting LINK_TRAINING_ENABLE in STRAP_REG(1).
+ * Wait for LINK_COMPLETE in the debug status register.
+ */
+static int sky1_link_start(struct sky1_pcie_acpi *pcie, struct device *dev)
+{
+	u32 val;
+	int ret;
+
+	val = readl(pcie->strap_base + STRAP_REG(1));
+	val |= LINK_TRAINING_ENABLE;
+	writel(val, pcie->strap_base + STRAP_REG(1));
+
+	ret = readl_poll_timeout(pcie->reg_base + SKY1_DBG_STS_0, val,
+				 val & LINK_COMPLETE,
+				 LINK_POLL_US, LINK_TIMEOUT_US);
+	if (ret)
+		return ret;
+
+	/*
+	 * PCIe r6.0, sec 6.6.1: a Downstream Port that supports Link
+	 * speeds greater than 5.0 GT/s must wait a minimum of 100ms
+	 * after Link training completes before sending a Configuration
+	 * Request.
+	 */
+	msleep(LINK_WAIT_AFTER_MS);
+	return 0;
+}
+
+/* --- Diagnostic: ATU outbound region dump --- */
+
+static void sky1_dump_atu(struct sky1_pcie_acpi *pcie, struct device *dev)
+{
+	void __iomem *base = pcie->reg_base;
+	int i;
+
+	for (i = 0; i < 32; i++) {
+		u32 cpu0 = readl(base + SKY1_AT_OB_CPU_ADDR0(i));
+		u32 cpu1 = readl(base + SKY1_AT_OB_CPU_ADDR1(i));
+		u32 desc0 = readl(base + SKY1_AT_OB_DESC0(i));
+		u32 desc1 = readl(base + SKY1_AT_OB_DESC1(i));
+		u32 pci0 = readl(base + SKY1_AT_OB_PCI_ADDR0(i));
+		u32 pci1 = readl(base + SKY1_AT_OB_PCI_ADDR1(i));
+		u32 ctrl0 = readl(base + SKY1_AT_OB_CTRL0(i));
+		u32 type, nbits;
+		u64 cpu_addr, size;
+		const char *type_str;
+
+		/* Skip completely empty regions (all regs zero) */
+		if (!desc0 && !cpu0 && !cpu1)
+			continue;
+
+		type = (desc0 >> 24) & 0x1f;
+		nbits = cpu0 & 0x3f;
+		cpu_addr = ((u64)cpu1 << 32) | (cpu0 & ~0xffUL);
+		size = nbits ? (1ULL << (nbits + 1)) : 0;
+
+		switch (type) {
+		case 0x0: type_str = "MEM"; break;
+		case 0x2: type_str = "IO"; break;
+		case 0x4: type_str = "CFG0"; break;
+		case 0x5: type_str = "CFG1"; break;
+		case 0x10: type_str = "MSG"; break;
+		default: type_str = "???"; break;
+		}
+
+		dev_info(dev, "ATU OB[%2d]: %-4s cpu=%#012llx size=%#llx pci=%08x_%08x desc=%08x/%08x ctrl0=%08x\n",
+			 i, type_str, cpu_addr, size,
+			 pci1, pci0 & ~0xffU, desc0, desc1, ctrl0);
+	}
+}
+
+/* --- ATU outbound region programming --- */
+
+/*
+ * Program an outbound ATU region for address translation.
+ *
+ * The Cadence PCIe IP requires outbound ATU entries to forward CPU
+ * memory transactions to PCIe.  Firmware only programs CFG0/CFG1
+ * entries for config space — memory and I/O regions must be added
+ * by the host driver.
+ *
+ * Uses 1:1 address mapping (CPU address == PCIe address).
+ * Region size must be a power of 2 aligned to the base address.
+ *
+ * Programming must match cdns_pcie_set_outbound_region() in
+ * pcie-cadence.c — notably CTRL0 SUPPLY_BUS | SUPPLY_DEV_FN and
+ * DESC1 bus number are required in RC mode, otherwise the ATU
+ * entry won't generate valid TLP headers.
+ */
+static void sky1_program_ob_atu(struct sky1_pcie_acpi *pcie,
+				struct device *dev, int region,
+				u32 type, u64 cpu_addr, u64 size,
+				u8 busnr)
+{
+	void __iomem *base = pcie->reg_base;
+	u32 nbits = ilog2(size);
+	u32 desc0, desc1, ctrl0, cpu0, cpu1, pci0, pci1;
+
+	if (nbits < 8)
+		nbits = 8;
+
+	desc0 = (type << 24);
+	desc1 = ((u32)busnr << 24);	/* bus in [31:24], devfn=0 */
+	ctrl0 = OB_CTRL0_SUPPLY_BUS | OB_CTRL0_SUPPLY_DEV_FN;
+	cpu0 = (lower_32_bits(cpu_addr) & GENMASK(31, 8)) | (nbits - 1);
+	cpu1 = upper_32_bits(cpu_addr);
+	pci0 = (lower_32_bits(cpu_addr) & GENMASK(31, 8)) | (nbits - 1);
+	pci1 = upper_32_bits(cpu_addr);
+
+	writel(pci0, base + SKY1_AT_OB_PCI_ADDR0(region));
+	writel(pci1, base + SKY1_AT_OB_PCI_ADDR1(region));
+	writel(desc0, base + SKY1_AT_OB_DESC0(region));
+	writel(desc1, base + SKY1_AT_OB_DESC1(region));
+	writel(cpu0, base + SKY1_AT_OB_CPU_ADDR0(region));
+	writel(cpu1, base + SKY1_AT_OB_CPU_ADDR1(region));
+	writel(ctrl0, base + SKY1_AT_OB_CTRL0(region));
+
+	dev_info(dev, "programmed ATU OB[%d]: %s cpu=%#llx size=%#llx bus=%u\n",
+		 region, type == OB_TYPE_MEM ? "MEM" : "IO",
+		 cpu_addr, size, busnr);
+}
+
+/* --- Controller register initialization --- */
+
+/*
+ * Write all controller registers needed for proper operation.
+ * This matches sky1_pcie_init() in pci-sky1.c — keep in sync.
+ *
+ * Called with link quiesced for safe register modification.
+ */
+static void sky1_hw_init(struct sky1_pcie_acpi *pcie, struct device *dev)
+{
+	void __iomem *base = pcie->reg_base;
+	u16 offset;
+	u32 reg;
+
+	/* RC BAR config: enable I/O + prefetchable memory bridge windows */
+	writel(SKY1_RC_BAR_CFG_VALUE, base + SKY1_RC_BAR_CFG);
+
+	/* Device Control: MPS 256B, MRRS 1024B, No Snoop, Relaxed Ordering */
+	offset = sky1_find_cap(base, PCI_CAP_ID_EXP);
+	if (offset) {
+		reg = readl(base + offset + PCI_EXP_DEVCTL);
+		reg &= ~(PCI_EXP_DEVCTL_PAYLOAD | PCI_EXP_DEVCTL_READRQ);
+		reg |= PCI_EXP_DEVCTL_PAYLOAD_256B |
+		       PCI_EXP_DEVCTL_READRQ_1024B |
+		       PCI_EXP_DEVCTL_NOSNOOP_EN |
+		       PCI_EXP_DEVCTL_RELAX_EN;
+		writel(reg, base + offset + PCI_EXP_DEVCTL);
+
+		/* Disable L0s and L1 in Link Capabilities */
+		reg = readl(base + offset + PCI_EXP_LNKCAP);
+		reg &= ~(PCI_EXP_LNKCAP_ASPM_L0S | PCI_EXP_LNKCAP_ASPM_L1);
+		writel(reg, base + offset + PCI_EXP_LNKCAP);
+
+	} else {
+		dev_warn(dev, "PCI Express capability not found\n");
+	}
+
+	/* Filter LTR (bit 3) and PTM (bit 6) TLP messages */
+	reg = readl(base + SKY1_TLP_FILTER);
+	reg |= BIT(3) | BIT(6);
+	writel(reg, base + SKY1_TLP_FILTER);
+
+	/* Disable HW-autonomous D-state changes (D3hot hang workaround) */
+	writel(0, base + SKY1_PWR_STATE_CHANGE_CTRL);
+
+	/* Disable Link Upconfigure Capability */
+	writel(0x1F000000, base + SKY1_I_CFG_5);
+
+	/* Physical layer configuration */
+	writel(0x03141C05, base + SKY1_I_CFG_7);
+
+	/* Gen3 presets via Secondary PCI Express capability */
+	offset = sky1_find_ext_cap(base, PCI_EXT_CAP_ID_SECPCI);
+	if (offset) {
+		writel(0x27072707, base + offset + 0x0c);
+		writel(0x27072707, base + offset + 0x10);
+		writel(0x27072707, base + offset + 0x14);
+		writel(0x27072707, base + offset + 0x18);
+	}
+
+	/* Gen4 presets via Physical Layer 16.0 GT/s capability */
+	offset = sky1_find_ext_cap(base, PCI_EXT_CAP_ID_PL_16GT);
+	if (offset) {
+		writel(0x66666666, base + offset + PCI_PL_16GT_LE_CTRL);
+		writel(0x66666666, base + offset + PCI_PL_16GT_LE_CTRL + 4);
+	}
+
+	/* Enable PCLK rate override */
+	writel(0x80000688, base + SKY1_I_CFG_9);
+}
+
+/* --- ECAM ops --- */
+
+/*
+ * ECAM init callback — called from pci_ecam_create() after the ECAM
+ * window is mapped but before buses are scanned.
+ *
+ * Finds the companion CIXH2020 ACPI device for this root bridge, maps
+ * its controller and RCSU register banks, performs the full controller
+ * initialization sequence (quiesce → register writes → retrain), and
+ * stores private data in cfg->priv for the custom map_bus.
+ */
+static int sky1_pcie_acpi_init(struct pci_config_window *cfg)
+{
+	struct device *dev = cfg->parent;
+	struct sky1_pcie_acpi *pcie;
+	struct acpi_device *companion;
+	struct list_head resource_list;
+	struct resource_entry *rentry;
+	unsigned long long bbn;
+	u64 mem_base = 0, mem_size = 0;
+	u64 io_base = 0, io_size = 0;
+	int mem_idx = 0;
+	int ret;
+
+	pcie = devm_kzalloc(dev, sizeof(*pcie), GFP_KERNEL);
+	if (!pcie)
+		return -ENOMEM;
+
+	/* Find companion CIXH2020 matching this root bridge's bus number */
+	companion = NULL;
+	for_each_acpi_dev_match(companion, "CIXH2020", NULL, -1) {
+		if (ACPI_FAILURE(acpi_evaluate_integer(companion->handle,
+						       "_BBN", NULL, &bbn)))
+			continue;
+		if (bbn == cfg->busr.start)
+			break;
+	}
+
+	if (!companion) {
+		dev_err(dev, "no CIXH2020 companion for bus %pR\n",
+			&cfg->busr);
+		return -ENODEV;
+	}
+
+	/* Read controller ID from _DSD */
+	ret = fwnode_property_read_u32(acpi_fwnode_handle(companion),
+				       "sky1,pcie-ctrl-id", &pcie->ctrl_id);
+	if (ret) {
+		dev_err(dev, "CIXH2020 missing sky1,pcie-ctrl-id (err %d)\n",
+			ret);
+		goto out_put;
+	}
+
+	/*
+	 * Map register banks from companion _CRS resources.
+	 *
+	 * The CIXH2020 _CRS declares multiple memory resources.  We need
+	 * the first two 64K regions:
+	 *   [0] reg_base  — controller register bank
+	 *   [1] rcsu_base — RCSU register bank
+	 */
+	INIT_LIST_HEAD(&resource_list);
+	ret = acpi_dev_get_resources(companion, &resource_list, NULL, NULL);
+	if (ret < 0)
+		goto out_put;
+
+	list_for_each_entry(rentry, &resource_list, node) {
+		resource_size_t sz = resource_size(rentry->res);
+
+		if (resource_type(rentry->res) == IORESOURCE_MEM) {
+			if (sz == SZ_64K && mem_idx < 2) {
+				/* First two 64K regions: reg and RCSU */
+				void __iomem **dest = mem_idx == 0 ?
+					&pcie->reg_base : &pcie->rcsu_base;
+				*dest = devm_ioremap(dev,
+						     rentry->res->start,
+						     SZ_64K);
+				if (!*dest) {
+					ret = -ENOMEM;
+					goto out_free_list;
+				}
+				dev_dbg(dev, "%s: %pR\n",
+					mem_idx ? "rcsu_base" : "reg_base",
+					rentry->res);
+				mem_idx++;
+			} else if (sz > SZ_1M && !mem_base &&
+				   rentry->res->start != cfg->res.start) {
+				/*
+				 * PCI memory window (DWordMemory).
+				 * Skip the ECAM entry (matches cfg->res).
+				 */
+				mem_base = rentry->res->start;
+				mem_size = sz;
+			}
+		}
+
+		if (resource_type(rentry->res) == IORESOURCE_IO && !io_base) {
+			io_base = rentry->res->start;
+			io_size = sz;
+		}
+	}
+
+	acpi_dev_free_resource_list(&resource_list);
+
+	if (!pcie->reg_base || !pcie->rcsu_base) {
+		dev_err(dev, "CIXH2020 _CRS: need 2 x 64K MEM resources\n");
+		ret = -ENODEV;
+		goto out_put;
+	}
+
+	sky1_init_bases(pcie);
+
+	/*
+	 * Full initialization: quiesce link, write all controller
+	 * registers, retrain.  If the link was never up (empty slot),
+	 * still write registers but skip the quiesce/retrain cycle.
+	 */
+	if (sky1_link_is_up(pcie)) {
+		dev_info(dev, "sky1 PCIe ACPI init: bus %pR ctrl %u — reinit\n",
+			 &cfg->busr, pcie->ctrl_id);
+		sky1_link_stop(pcie, dev);
+		sky1_hw_init(pcie, dev);
+		ret = sky1_link_start(pcie, dev);
+		if (ret)
+			dev_warn(dev, "link retrain failed, device may not work\n");
+	} else {
+		dev_info(dev, "sky1 PCIe ACPI init: bus %pR ctrl %u — no link\n",
+			 &cfg->busr, pcie->ctrl_id);
+		sky1_hw_init(pcie, dev);
+	}
+
+	/*
+	 * Program outbound ATU for memory and I/O windows.
+	 *
+	 * Firmware only programs CFG0/CFG1 ATU entries for config space.
+	 * The Cadence PCIe IP needs MEM/IO ATU entries to forward CPU
+	 * memory and I/O transactions to the PCIe link.
+	 *
+	 * Use the companion's DWordMemory and DWordIO _CRS resources
+	 * to determine the address windows.  Round up to power-of-2
+	 * for ATU region size requirements.
+	 */
+	if (mem_base && mem_size) {
+		u64 atu_size = roundup_pow_of_two(mem_size);
+
+		sky1_program_ob_atu(pcie, dev, ATU_REGION_MEM,
+				    OB_TYPE_MEM, mem_base, atu_size,
+				    cfg->busr.start);
+	}
+	if (io_base && io_size) {
+		u64 atu_size = roundup_pow_of_two(io_size);
+
+		sky1_program_ob_atu(pcie, dev, ATU_REGION_IO,
+				    OB_TYPE_IO, io_base, atu_size,
+				    cfg->busr.start);
+	}
+
+	/* Dump ATU outbound regions for diagnostics */
+	sky1_dump_atu(pcie, dev);
+
+	cfg->priv = pcie;
+	acpi_dev_put(companion);
+	return 0;
+
+out_free_list:
+	acpi_dev_free_resource_list(&resource_list);
+out_put:
+	acpi_dev_put(companion);
+	return ret;
+}
+
+/*
+ * Custom map_bus for root port configuration space access.
+ *
+ * On Cadence PCIe IP, the root port's Type 1 config space lives in
+ * the controller's register bank (reg_base), NOT in the ECAM window.
+ * The ECAM window may shadow some registers but writes through ECAM
+ * may not take effect on the actual forwarding hardware.  All root
+ * port config accesses must go through reg_base.
+ *
+ * This matches:
+ *  - sky1_pcie_own_conf_map_bus() in pci-sky1.c (DT driver)
+ *  - al_pcie_map_bus() in pcie-al.c (Amazon Graviton MCFG quirk)
+ *
+ * Non-zero slots on the root bus are filtered (the Cadence IP doesn't
+ * correctly handle transactions to non-existent devices).
+ *
+ * All non-root-bus accesses use standard ECAM mapping.
+ */
+static void __iomem *sky1_pcie_acpi_map_bus(struct pci_bus *bus,
+					    unsigned int devfn, int where)
+{
+	struct pci_config_window *cfg = bus->sysdata;
+	struct sky1_pcie_acpi *pcie = cfg->priv;
+
+	if (bus->number == cfg->busr.start) {
+		if (PCI_SLOT(devfn) > 0)
+			return NULL;
+
+		return pcie->reg_base + where;
+	}
+
+	return pci_ecam_map_bus(bus, devfn, where);
+}
+
+const struct pci_ecam_ops sky1_pcie_ecam_ops = {
+	.init    = sky1_pcie_acpi_init,
+	.pci_ops = {
+		.map_bus = sky1_pcie_acpi_map_bus,
+		.read    = pci_generic_config_read,
+		.write   = pci_generic_config_write,
+	},
+};
+
+#endif /* CONFIG_ACPI && CONFIG_PCI_QUIRKS */
