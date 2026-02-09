@@ -6,6 +6,7 @@
 #include <linux/devfreq_cooling.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <linux/pm_domain.h>
 #include <linux/pm_opp.h>
 
 #include <drm/drm_managed.h>
@@ -104,6 +105,25 @@ static void panthor_devfreq_update_utilization(struct panthor_devfreq *pdevfreq)
 	pdevfreq->time_last_update = now;
 }
 
+/*
+ * Set GPU frequency via the SCMI perf domain's performance state.
+ * Unlike dev_pm_opp_set_rate(), this does not require a clock — the genpd's
+ * set_performance_state callback handles the SCMI call.
+ */
+static int panthor_devfreq_scmi_set_freq(struct device *dev, unsigned long freq)
+{
+	struct dev_pm_opp *opp;
+	int ret;
+
+	opp = dev_pm_opp_find_freq_ceil(dev, &freq);
+	if (IS_ERR(opp))
+		return PTR_ERR(opp);
+
+	ret = dev_pm_opp_set_opp(dev, opp);
+	dev_pm_opp_put(opp);
+	return ret;
+}
+
 static int panthor_devfreq_target(struct device *dev, unsigned long *freq,
 				  u32 flags)
 {
@@ -150,7 +170,7 @@ static int panthor_devfreq_target(struct device *dev, unsigned long *freq,
 	spin_unlock_irqrestore(&pdevfreq->lock, irqflags);
 
 	/* Actual SCMI frequency change (may sleep on mailbox) */
-	err = dev_pm_opp_set_rate(pdevfreq->opp_dev, target_freq);
+	err = panthor_devfreq_scmi_set_freq(dev, target_freq);
 
 	spin_lock_irqsave(&pdevfreq->lock, irqflags);
 
@@ -182,8 +202,8 @@ static int panthor_devfreq_target(struct device *dev, unsigned long *freq,
 			drm_info(&ptdev->base,
 				 "GPU DVFS: boosting to safe freq %lu MHz\n",
 				 pdevfreq->safe_freq / 1000000);
-			err = dev_pm_opp_set_rate(pdevfreq->opp_dev,
-						  pdevfreq->safe_freq);
+			err = panthor_devfreq_scmi_set_freq(dev,
+						       pdevfreq->safe_freq);
 
 			spin_lock_irqsave(&pdevfreq->lock, irqflags);
 			if (!err) {
@@ -259,11 +279,17 @@ static struct devfreq_dev_profile panthor_devfreq_profile = {
  * @pdevfreq: Panthor devfreq state
  *
  * On platforms with multiple power domains (e.g. Sky1 with pd_gpu + perf),
- * panthor_pm_domain_init() has already created virtual devices for each domain.
- * Find the "perf" domain's virtual device, read the firmware-provided OPP
- * table from it, and copy OPPs to the main device for devfreq use. Frequency
- * changes will be routed through the virtual device so the SCMI firmware can
- * manage both frequency and voltage.
+ * the SCMI firmware provides an OPP table via the perf domain's attach_dev
+ * callback.
+ *
+ * Under DT: panthor_pm_domain_init() already created virtual devices for each
+ * domain.  Find the "perf" domain's virtual device, read OPPs from it, and
+ * copy them to the main device.  Frequency changes route through the virtual
+ * device so the SCMI firmware manages both frequency and voltage.
+ *
+ * Under ACPI: attach the GPU device directly to the SCMI perf genpd (looked
+ * up by firmware name).  The attach_dev callback populates OPPs on the main
+ * device.  Frequency changes go through the genpd's set_performance_state.
  *
  * Return: number of OPPs added, 0 if no perf domain found, negative on error.
  */
@@ -274,47 +300,83 @@ static int panthor_devfreq_scmi_init(struct panthor_device *ptdev,
 	struct device *opp_dev;
 	struct dev_pm_opp *opp;
 	unsigned long freq;
-	int index, count, i, ret;
+	int count, i, ret;
 
-	/* Find "perf" power domain index from DT */
-	index = of_property_match_string(dev->of_node,
-					 "power-domain-names", "perf");
-	if (index < 0 || index >= ARRAY_SIZE(ptdev->pm_domain_devs))
-		return 0;
+	if (dev->of_node) {
+		int index;
 
-	opp_dev = ptdev->pm_domain_devs[index];
-	if (!opp_dev)
-		return 0;
+		/* DT: find "perf" power domain virtual device */
+		index = of_property_match_string(dev->of_node,
+						 "power-domain-names", "perf");
+		if (index < 0 || index >= ARRAY_SIZE(ptdev->pm_domain_devs))
+			return 0;
 
-	/* SCMI attach_dev callback already populated OPPs on the virtual device */
-	count = dev_pm_opp_get_opp_count(opp_dev);
-	if (count <= 0)
-		return 0;
+		opp_dev = ptdev->pm_domain_devs[index];
+		if (!opp_dev)
+			return 0;
 
-	/* Copy OPPs from the perf domain virtual device to the main device */
-	for (i = 0, freq = 0; ; i++, freq++) {
-		opp = dev_pm_opp_find_freq_ceil(opp_dev, &freq);
-		if (IS_ERR(opp))
-			break;
-		dev_pm_opp_put(opp);
+		/* Copy OPPs from virtual device to main device */
+		count = dev_pm_opp_get_opp_count(opp_dev);
+		if (count <= 0)
+			return 0;
 
-		ret = dev_pm_opp_add(dev, freq, 0);
+		for (i = 0, freq = 0; ; i++, freq++) {
+			opp = dev_pm_opp_find_freq_ceil(opp_dev, &freq);
+			if (IS_ERR(opp))
+				break;
+			dev_pm_opp_put(opp);
+
+			ret = dev_pm_opp_add(dev, freq, 0);
+			if (ret) {
+				drm_warn(&ptdev->base,
+					 "Failed to add OPP %lu Hz: %d\n",
+					 freq, ret);
+				break;
+			}
+		}
+
+		if (i == 0)
+			return 0;
+	} else {
+		/*
+		 * ACPI: attach directly to the SCMI perf genpd.  The
+		 * genpd's attach_dev callback populates OPPs on the
+		 * main device.  No virtual device or OPP copy needed.
+		 */
+		struct generic_pm_domain *perf_genpd;
+
+		perf_genpd = pm_genpd_lookup_by_name("gpu_core");
+		if (!perf_genpd) {
+			drm_dbg(&ptdev->base,
+				"GPU DVFS: gpu_core genpd not found\n");
+			return 0;
+		}
+
+		ret = pm_genpd_add_device(perf_genpd, dev);
 		if (ret) {
 			drm_warn(&ptdev->base,
-				 "Failed to add OPP %lu Hz: %d\n", freq, ret);
-			break;
+				 "Failed to attach SCMI perf domain: %d\n",
+				 ret);
+			return 0;
 		}
-	}
 
-	if (i == 0)
-		return 0;
+		count = dev_pm_opp_get_opp_count(dev);
+		if (count <= 0) {
+			pm_genpd_remove_device(dev);
+			return 0;
+		}
+
+		/* Main device IS the OPP device under ACPI */
+		opp_dev = dev;
+	}
 
 	pdevfreq->opp_dev = opp_dev;
 
-	drm_info(&ptdev->base,
-		 "GPU DVFS: %d OPPs from SCMI perf domain\n", i);
+	drm_dbg(&ptdev->base,
+		"GPU DVFS: %d OPPs from SCMI perf domain\n",
+		dev_pm_opp_get_opp_count(dev));
 
-	return i;
+	return dev_pm_opp_get_opp_count(dev);
 }
 
 int panthor_devfreq_init(struct panthor_device *ptdev)
@@ -427,14 +489,11 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
 	 * Set the recommended OPP. This will enable and configure the regulator
 	 * if any and will avoid a switch off by regulator_late_cleanup().
 	 *
-	 * When using an SCMI perf domain, frequency changes must go through the
-	 * virtual perf device. The main device's OPPs (manually copied) have no
-	 * clock or regulator association, so set_opp on them is a no-op.
+	 * Use dev_pm_opp_set_opp() (not dev_pm_opp_set_rate) so this works
+	 * both with regulators and with SCMI perf domains (which have no
+	 * clock — frequency changes go through the genpd performance state).
 	 */
-	if (pdevfreq->opp_dev)
-		ret = dev_pm_opp_set_rate(pdevfreq->opp_dev, cur_freq);
-	else
-		ret = dev_pm_opp_set_opp(dev, opp);
+	ret = dev_pm_opp_set_opp(dev, opp);
 	dev_pm_opp_put(opp);
 	if (ret) {
 		DRM_DEV_ERROR(dev, "Couldn't set recommended OPP\n");
@@ -469,9 +528,6 @@ int panthor_devfreq_init(struct panthor_device *ptdev)
 				if (!IS_ERR(opp_tmp)) {
 					pdevfreq->safe_freq = safe;
 					dev_pm_opp_put(opp_tmp);
-					drm_info(&ptdev->base,
-						 "GPU DVFS: safe freq = %lu MHz\n",
-						 safe / 1000000);
 				}
 			}
 		}
