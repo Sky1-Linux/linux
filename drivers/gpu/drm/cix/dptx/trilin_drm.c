@@ -1018,6 +1018,18 @@ static int trilin_dp_encoder_atomic_check(struct drm_encoder *encoder,
 	if (crtc_state->self_refresh_active && !crtc_state->vrr_enabled)
 		return 0;
 
+	/*
+	 * Skip mode computation for non-modeset commits.  DRM core calls
+	 * encoder_atomic_check on every atomic commit that includes the
+	 * connector, even simple plane updates or pan operations.  Running
+	 * compute_config here would needlessly reconfigure link parameters
+	 * and print to the console, which can trigger a feedback loop when
+	 * fbcon is active (console output -> pan_display -> atomic commit ->
+	 * encoder_atomic_check -> console output).
+	 */
+	if (!drm_atomic_crtc_needs_modeset(crtc_state))
+		return 0;
+
 	trilin_dp_encoder_atomic_adjust_mode(dp, mode, adjusted_mode);
 
 	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP) {
