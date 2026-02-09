@@ -1243,17 +1243,17 @@ static int d350_probe(struct platform_device *pdev)
 	 * callback handles NULL dmac gracefully during this initial call.
 	 * We then manually enable the clock since dmac isn't set up yet.
 	 */
-	dev_info(dev, "DMA-350 probe: enabling pm_runtime\n");
+	dev_dbg(dev, "DMA-350 probe: enabling pm_runtime\n");
 	pm_runtime_enable(dev);
 	ret = pm_runtime_resume_and_get(dev);
 	if (ret < 0) {
 		pm_runtime_disable(dev);
 		return dev_err_probe(dev, ret, "Failed to power on device\n");
 	}
-	dev_info(dev, "DMA-350 probe: pm_runtime_resume_and_get returned %d\n", ret);
+	dev_dbg(dev, "DMA-350 probe: pm_runtime_resume_and_get returned %d\n", ret);
 
 	/* Manually enable clock for initial probe (runtime_resume skipped it) */
-	dev_info(dev, "DMA-350 probe: enabling clock %pC\n", clk);
+	dev_dbg(dev, "DMA-350 probe: enabling clock %pC\n", clk);
 	ret = clk_prepare_enable(clk);
 	if (ret) {
 		pm_runtime_put(dev);
@@ -1272,7 +1272,7 @@ static int d350_probe(struct platform_device *pdev)
 			goto err_pm_put;
 		}
 		if (rst) {
-			dev_info(dev, "DMA-350 probe: deasserting reset\n");
+			dev_dbg(dev, "DMA-350 probe: deasserting reset\n");
 			ret = reset_control_deassert(rst);
 			if (ret) {
 				dev_err(dev, "Failed to deassert reset: %d\n", ret);
@@ -1283,8 +1283,20 @@ static int d350_probe(struct platform_device *pdev)
 		}
 	}
 
-	dev_info(dev, "DMA-350 probe: about to read IIDR at %p + 0x%x\n",
-		 base, DMAINFO + IIDR);
+	dev_dbg(dev, "DMA-350 probe: about to read IIDR at %p + 0x%x\n",
+		base, DMAINFO + IIDR);
+
+	/*
+	 * Devices with "arm,remote-ctrl" (e.g. audio subsystem DMA) live in
+	 * a power domain managed by a remote processor.  Accessing registers
+	 * before that domain is powered causes an unrecoverable SError on
+	 * ARM64.  Skip these until their controller is available.
+	 */
+	if (device_property_present(dev, "arm,remote-ctrl")) {
+		dev_dbg(dev, "DMA-350: remote-controlled, skipping probe\n");
+		ret = -ENODEV;
+		goto err_pm_put;
+	}
 
 	reg = readl_relaxed(base + DMAINFO + IIDR);
 	r = FIELD_GET(IIDR_VARIANT, reg);
@@ -1317,7 +1329,7 @@ static int d350_probe(struct platform_device *pdev)
 
 	/* Initialize reserved memory region if specified in DT */
 	ret = of_reserved_mem_device_init(dev);
-	if (ret && ret != -ENODEV) {
+	if (ret && ret != -ENODEV && ret != -EINVAL) {
 		dev_err(dev, "Failed to initialize reserved memory: %d\n", ret);
 		goto err_pm_put;
 	}
@@ -1460,10 +1472,12 @@ static int d350_probe(struct platform_device *pdev)
 	}
 
 	/* Register for device tree DMA channel requests */
-	ret = of_dma_controller_register(dev->of_node, d350_of_xlate, dmac);
-	if (ret) {
-		dev_err(dev, "Failed to register OF DMA controller: %d\n", ret);
-		goto err_dma_unregister;
+	if (dev->of_node) {
+		ret = of_dma_controller_register(dev->of_node, d350_of_xlate, dmac);
+		if (ret) {
+			dev_err(dev, "Failed to register OF DMA controller: %d\n", ret);
+			goto err_dma_unregister;
+		}
 	}
 
 	dev_info(dev, "DMA-350 r%dp%d initialized with %d channels\n",
