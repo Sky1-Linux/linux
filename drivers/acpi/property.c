@@ -874,6 +874,22 @@ static int acpi_get_ref_args(struct fwnode_reference_args *args,
 		num_args = acpi_fwnode_get_args_count(ref_fwnode, nargs_prop);
 
 	/*
+	 * Consume consecutive string elements as hierarchical _DSD data node
+	 * path components.  ACPI graph references encode the path to a remote
+	 * endpoint as: Package { DEV, "port@N", "endpoint@N" }
+	 * Each string names a child data node under the preceding reference.
+	 */
+	for (; *element < end && (*element)->type == ACPI_TYPE_STRING;
+	     (*element)++) {
+		const char *child_name = (*element)->string.pointer;
+
+		ref_fwnode = acpi_fwnode_get_named_child_node(ref_fwnode,
+							      child_name);
+		if (!ref_fwnode)
+			return -EINVAL;
+	}
+
+	/*
 	 * Assume the following integer elements are all args. Stop counting on
 	 * the first reference (possibly represented as a string) or end of the
 	 * package arguments. In case of neither reference, nor integer, return
