@@ -88,8 +88,13 @@ static int scmi_perf_domain_probe(struct scmi_device *sdev)
 	if (!handle)
 		return -ENODEV;
 
-	/* The OF node must specify us as a power-domain provider. */
-	if (!of_find_property(dev->of_node, "#power-domain-cells", NULL))
+	/*
+	 * Under DT, the OF node must specify us as a power-domain provider.
+	 * Under ACPI, there's no of_node — proceed unconditionally and
+	 * register genpds globally for lookup by name.
+	 */
+	if (dev->of_node &&
+	    !of_find_property(dev->of_node, "#power-domain-cells", NULL))
 		return 0;
 
 	perf_ops = handle->devm_protocol_get(sdev, SCMI_PROTOCOL_PERF, &ph);
@@ -141,12 +146,19 @@ static int scmi_perf_domain_probe(struct scmi_device *sdev)
 	scmi_pd_data->domains = domains;
 	scmi_pd_data->num_domains = num_domains;
 
-	ret = of_genpd_add_provider_onecell(dev->of_node, scmi_pd_data);
-	if (ret)
-		goto err;
+	/*
+	 * Register DT provider if a device tree node is available.
+	 * Under ACPI, domains are still globally registered by
+	 * pm_genpd_init() and consumers attach by name.
+	 */
+	if (dev->of_node) {
+		ret = of_genpd_add_provider_onecell(dev->of_node, scmi_pd_data);
+		if (ret)
+			goto err;
+	}
 
 	dev_set_drvdata(dev, scmi_pd_data);
-	dev_info(dev, "Initialized %d performance domains", num_domains);
+	dev_info(dev, "SCMI perf domains registered (%d domains)\n", num_domains);
 	return 0;
 err:
 	for (i--; i >= 0; i--)
@@ -163,7 +175,8 @@ static void scmi_perf_domain_remove(struct scmi_device *sdev)
 	if (!scmi_pd_data)
 		return;
 
-	of_genpd_del_provider(dev->of_node);
+	if (dev->of_node)
+		of_genpd_del_provider(dev->of_node);
 
 	for (i = 0; i < scmi_pd_data->num_domains; i++)
 		pm_genpd_remove(scmi_pd_data->domains[i]);
