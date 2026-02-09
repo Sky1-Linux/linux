@@ -339,7 +339,7 @@ static void sky1_pcie_ctrl_writel_reg(struct sky1_pcie *pcie, u32 reg, u32 val)
 	writel(val, pcie->reg_base + reg);
 }
 
-void sky1_pcie_enable_indicatbit_int(struct sky1_pcie *pcie, bool en)
+static void sky1_pcie_enable_indicatbit_int(struct sky1_pcie *pcie, bool en)
 {
 	u32 reg = 0;
 
@@ -2164,7 +2164,7 @@ static struct resource *devm_pci_create_bus_range(struct device *dev)
 	return res;
 }
 
-int devm_acpi_pci_bridge_init(struct device *dev,
+static int devm_acpi_pci_bridge_init(struct device *dev,
 			struct pci_host_bridge *bridge)
 {
 	struct resource *res = NULL;
@@ -2364,27 +2364,28 @@ static void sky1_pcie_set_link_disable(struct sky1_pcie *pcie)
 		dev_dbg(pcie->dev, "link not in DISABLED, 0x%x\n", val);
 }
 
-void __iomem *sky1_pcie_own_conf_map_bus(struct pci_bus *bus,
+static void __iomem *sky1_pcie_own_conf_map_bus(struct pci_bus *bus,
 					 unsigned int devfn, int where)
 {
 	struct pci_host_bridge *bridge = pci_find_host_bridge(bus);
 	struct cdns_pcie_rc *rc = pci_host_bridge_priv(bridge);
 	struct cdns_pcie *c_pcie = &rc->pcie;
 	struct sky1_pcie *pcie = dev_get_drvdata(c_pcie->dev);
-	void __iomem *addr;
 
-	if (PCI_SLOT(devfn) > 0)
-		return NULL;
+	/*
+	 * Root port config space is in the controller register block,
+	 * not the ECAM window.  After controller reset/reinit the ECAM
+	 * only covers downstream buses — reading ECAM offset 0 returns
+	 * 0xffffffff.  This matches mainline cdns_pci_map_bus().
+	 */
+	if (pci_is_root_bus(bus)) {
+		if (PCI_SLOT(devfn) > 0)
+			return NULL;
+		return pcie->reg_base + (where & 0xfff);
+	}
 
-	if ((where == PCI_BRIDGE_CONTROL) || (where == pcie->linkctrl_offset))
-		addr = pcie->reg_base + where;
-	else
-		addr = pci_generic_ecam_ops.pci_ops.map_bus(bus, devfn, where);
-
-	return addr;
+	return pci_generic_ecam_ops.pci_ops.map_bus(bus, devfn, where);
 }
-EXPORT_SYMBOL_GPL(sky1_pcie_own_conf_map_bus);
-
 static struct pci_ops sky1_pcie_own_ops = {
 	.map_bus = sky1_pcie_own_conf_map_bus,
 	.read = pci_generic_config_read,
@@ -2611,13 +2612,16 @@ static int sky1_pcie_probe(struct platform_device *pdev)
 	dev_info(dev, "%s starting!\n", __func__);
 
 	/*
-	 * When created by pci-sky1-acpi.c scan handler, the platform
-	 * device has no fwnode (to bypass fw_devlink).  Set the ACPI
-	 * companion here so resource lookups and match data work.
+	 * ACPI companion is normally set by pci-sky1-acpi.c scan handler
+	 * after platform device registration.  Fallback binding here in
+	 * case it wasn't set (shouldn't happen in normal flow).
 	 */
 	acpi_pdata = dev_get_platdata(dev);
-	if (acpi_pdata)
-		ACPI_COMPANION_SET(dev, acpi_pdata->adev);
+	if (acpi_pdata && !has_acpi_companion(dev)) {
+		ret = acpi_bind_one(dev, acpi_pdata->adev);
+		if (ret)
+			return ret;
+	}
 
 	pcie = devm_kzalloc(dev, sizeof(*pcie), GFP_KERNEL);
 	if (!pcie)
@@ -2638,6 +2642,10 @@ static int sky1_pcie_probe(struct platform_device *pdev)
 		}
 	}
 
+	ret = sky1_pcie_parse_property(pdev, pcie);
+	if (ret < 0)
+		return ret;
+
 	sky1_pcie_debugfs_init(pcie);
 
 	if (!ACPI_COMPANION(dev))
@@ -2650,10 +2658,6 @@ static int sky1_pcie_probe(struct platform_device *pdev)
 	bus = resource_list_first_type(&bridge->windows, IORESOURCE_BUS);
 	if (!bus)
 		return -ENODEV;
-
-	ret = sky1_pcie_parse_property(pdev, pcie);
-	if (ret < 0)
-		return -EINVAL;
 
 	ret = sky1_pcie_en_ep_power(pcie, true);
 	if (ret < 0)

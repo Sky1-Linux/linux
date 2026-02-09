@@ -29,6 +29,7 @@
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
 #include <linux/clk.h>
+#include <linux/property.h>
 
 /* Default time in millisecond to wait for emergency shutdown */
 #define FV_DEF_EMERG_SHUTDWN_TMO	10
@@ -207,6 +208,57 @@ of_get_fixed_voltage_config(struct device *dev,
 static const struct regulator_ops fixed_voltage_ops = {
 };
 
+/**
+ * fwnode_get_fixed_voltage_config - extract config from fwnode properties
+ * @dev: device requesting for fixed_voltage_config
+ * @desc: regulator description
+ *
+ * Populates fixed_voltage_config from generic device properties (fwnode),
+ * enabling ACPI PRP0001 devices with compatible = "regulator-fixed" to
+ * probe via the same driver as their DT counterparts.
+ *
+ * Return: Pointer to a populated &struct fixed_voltage_config or ERR_PTR()
+ *	   on failure.
+ */
+static struct fixed_voltage_config *
+fwnode_get_fixed_voltage_config(struct device *dev,
+				const struct regulator_desc *desc)
+{
+	struct fixed_voltage_config *config;
+	u32 uv_min = 0, uv_max = 0;
+
+	config = devm_kzalloc(dev, sizeof(*config), GFP_KERNEL);
+	if (!config)
+		return ERR_PTR(-ENOMEM);
+
+	device_property_read_string(dev, "regulator-name",
+				    &config->supply_name);
+	if (!config->supply_name)
+		config->supply_name = dev_name(dev);
+
+	device_property_read_u32(dev, "regulator-min-microvolt", &uv_min);
+	device_property_read_u32(dev, "regulator-max-microvolt", &uv_max);
+	if (uv_min && uv_min == uv_max)
+		config->microvolts = uv_min;
+
+	device_property_read_u32(dev, "startup-delay-us",
+				 &config->startup_delay);
+	device_property_read_u32(dev, "off-on-delay-us",
+				 &config->off_on_delay);
+
+	if (device_property_present(dev, "vin-supply"))
+		config->input_supply = "vin";
+
+	/*
+	 * Firmware-described fixed regulators are typically already enabled
+	 * by firmware at boot.  Default to enabled to avoid glitching
+	 * supply rails during probe.
+	 */
+	config->enabled_at_boot = true;
+
+	return config;
+}
+
 static const struct regulator_ops fixed_voltage_clkenabled_ops = {
 	.enable = reg_clock_enable,
 	.disable = reg_clock_disable,
@@ -237,6 +289,11 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 	if (pdev->dev.of_node) {
 		config = of_get_fixed_voltage_config(&pdev->dev,
 						     &drvdata->desc);
+		if (IS_ERR(config))
+			return PTR_ERR(config);
+	} else if (dev_fwnode(&pdev->dev)) {
+		config = fwnode_get_fixed_voltage_config(&pdev->dev,
+							 &drvdata->desc);
 		if (IS_ERR(config))
 			return PTR_ERR(config);
 	} else {

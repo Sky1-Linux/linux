@@ -94,12 +94,11 @@ static int sky1_cixh2020_create_pdev(struct acpi_device *adev)
 	acpi_dev_free_resource_list(&resource_list);
 
 	/*
-	 * Use driver name for matching (no fwnode = name-based match).
-	 * Do NOT set fwnode — it enables fw_devlink which creates
-	 * mandatory supplier links from _DSD references (e.g. PHY →
-	 * clock controller) that have no driver.  Pass the ACPI device
-	 * via platform data so pci-sky1.c can set ACPI_COMPANION at
-	 * probe time (after fw_devlink checks have passed).
+	 * Register without fwnode to bypass fw_devlink at device_add()
+	 * time — CIXH2020 _DSD references suppliers (PRP0001 regulators)
+	 * that may lack drivers, which would create unsatisfiable links.
+	 * The ACPI companion is bound post-registration (see below) so
+	 * bus_find_device_by_acpi_dev() works for RSTL reset lookups.
 	 */
 	pdevinfo.name = "sky1-pcie";
 	pdevinfo.id = PLATFORM_DEVID_AUTO;
@@ -116,6 +115,21 @@ static int sky1_cixh2020_create_pdev(struct acpi_device *adev)
 			PTR_ERR(pdev));
 		return 1; /* claim to prevent default enumeration (fw_devlink) */
 	}
+
+	/*
+	 * Bind the ACPI companion now.  The device was registered without
+	 * fwnode (to bypass fw_devlink), so device_add() created no
+	 * supplier links.  Setting fwnode post-registration does NOT
+	 * retroactively trigger fw_devlink — add_links only runs during
+	 * device_add().
+	 *
+	 * The companion is needed so cix-acpi-resource-lookup (CIXA1019)
+	 * can resolve CIXH2020 RSTL entries via bus_find_device_by_acpi_dev()
+	 * and register reset_control_lookup entries for this device.
+	 * Without this, devm_reset_control_get_optional_exclusive() returns
+	 * NULL and the controller reset is silently skipped.
+	 */
+	acpi_bind_one(&pdev->dev, adev);
 
 	dev_info(&adev->dev, "Sky1: created platform device %s (%d resources)\n",
 		 dev_name(&pdev->dev), count);
