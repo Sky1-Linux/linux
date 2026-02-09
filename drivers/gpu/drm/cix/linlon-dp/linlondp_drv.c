@@ -136,7 +136,6 @@ static void linlondp_add_acpi_slave(struct device *master,
 	remote = fwnode_graph_get_remote_node(np, port, endpoint);
 
 	if (remote) {
-		pr_info("%s. remote.name=%s\n", __func__, dev_name(remote->dev));
 		fwnode_handle_get(remote);
 		component_match_add_release(master, match, drm_release_fwnode,
 					    compare_of, remote);
@@ -165,18 +164,16 @@ static int linlondp_platform_probe(struct platform_device *pdev)
 	struct device_node *of_child;
 	const char *tmp_name = NULL;
 
-	pr_info("%s enter. dev.name=%s\n", __func__, dev_name(dev));
-	pr_info("linlondp enable fb is %d", enable_fb);
+	dev_dbg(dev, "probe enter, enable_fb=%d\n", enable_fb);
 #if !IS_ENABLED(CONFIG_DRM_CIX_COMPONENT_BIND_BYPASSED)
 	if (has_acpi_companion(dev)) {
-		pr_info("%s via acpi.\n", __func__);
+		dev_dbg(dev, "probe via ACPI\n");
 		fwnode_for_each_child_node(dev->fwnode, acpi_child) {
 			tmp_name = acpi_child->ops->get_name(acpi_child);
 			if (strncmp(tmp_name, "pipeline", 8))
 				continue;
 
 			/* add connector */
-			pr_info("%s enter to add connector.\n", __func__);
 			linlondp_add_acpi_slave(dev, &match, acpi_child,
 						LINLONDP_OF_PORT_OUTPUT, 0);
 			linlondp_add_acpi_slave(dev, &match, acpi_child,
@@ -185,7 +182,7 @@ static int linlondp_platform_probe(struct platform_device *pdev)
 			dev_pm_set_driver_flags(&pdev->dev, DPM_FLAG_NO_DIRECT_COMPLETE);
 		}
 	} else {
-		pr_info("%s via dt.\n", __func__);
+		dev_dbg(dev, "probe via DT\n");
 		for_each_available_child_of_node(dev->of_node, of_child) {
 			if (of_node_cmp(of_child->name, "pipeline") != 0)
 				continue;
@@ -197,7 +194,11 @@ static int linlondp_platform_probe(struct platform_device *pdev)
 					   LINLONDP_OF_PORT_OUTPUT, 1);
 		}
 	}
-	pr_info("%s end. match=%p\n", __func__, match);
+	if (!match) {
+		dev_dbg(dev, "no display connectors found, skipping\n");
+		return -ENODEV;
+	}
+
 	return component_master_add_with_match(dev, &linlondp_master_ops,
 					       match);
 #else
