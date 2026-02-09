@@ -5,11 +5,13 @@
  * Copyright (C) 2023 Linaro Ltd.
  */
 
+#include <linux/acpi.h>
 #include <linux/err.h>
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/pm_domain.h>
 #include <linux/pm_opp.h>
+#include <linux/property.h>
 #include <linux/scmi_protocol.h>
 #include <linux/slab.h>
 
@@ -72,6 +74,57 @@ scmi_pd_detach_dev(struct generic_pm_domain *genpd, struct device *dev)
 		return;
 
 	dev_pm_opp_remove_all_dynamic(dev);
+}
+
+struct proto_fwnode_match {
+	u8 protocol_id;
+	struct fwnode_handle *result;
+};
+
+static int match_proto_reg(struct acpi_device *adev, void *data)
+{
+	struct proto_fwnode_match *match = data;
+	u32 reg;
+
+	if (fwnode_property_read_u32(acpi_fwnode_handle(adev), "reg", &reg) == 0 &&
+	    reg == match->protocol_id) {
+		match->result = acpi_fwnode_handle(adev);
+		return 1;
+	}
+	return 0;
+}
+
+/**
+ * scmi_perf_find_proto_fwnode() - Find the protocol-specific ACPI fwnode
+ * @sdev: SCMI device (inherits parent fwnode under ACPI)
+ *
+ * Under ACPI, the SCMI device's fwnode points to the parent controller
+ * (e.g. \_SB_.SCMI).  Consumers reference protocol-specific children
+ * (e.g. \_SB_.SCMI.DVFS) which have a "reg" property matching the
+ * protocol_id.  These children may have _STA=0 (namespace-only stubs),
+ * so we must use acpi_dev_for_each_child() which iterates all children
+ * including non-present ones, rather than fwnode_for_each_child_node()
+ * which skips them.
+ *
+ * Returns the protocol fwnode, or NULL if not found.
+ */
+static struct fwnode_handle *scmi_perf_find_proto_fwnode(struct scmi_device *sdev)
+{
+	struct acpi_device *parent_adev;
+	struct proto_fwnode_match match = {
+		.protocol_id = sdev->protocol_id,
+		.result = NULL,
+	};
+
+	if (sdev->dev.of_node)
+		return NULL;
+
+	parent_adev = to_acpi_device_node(dev_fwnode(&sdev->dev));
+	if (!parent_adev)
+		return NULL;
+
+	acpi_dev_for_each_child(parent_adev, match_proto_reg, &match);
+	return match.result;
 }
 
 static int scmi_perf_domain_probe(struct scmi_device *sdev)
@@ -146,15 +199,26 @@ static int scmi_perf_domain_probe(struct scmi_device *sdev)
 	scmi_pd_data->domains = domains;
 	scmi_pd_data->num_domains = num_domains;
 
-	/*
-	 * Register DT provider if a device tree node is available.
-	 * Under ACPI, domains are still globally registered by
-	 * pm_genpd_init() and consumers attach by name.
-	 */
 	if (dev->of_node) {
 		ret = of_genpd_add_provider_onecell(dev->of_node, scmi_pd_data);
 		if (ret)
 			goto err;
+	} else {
+		/*
+		 * Under ACPI, register a fwnode-based provider so consumers
+		 * can resolve power-domains _DSD references.  The provider
+		 * fwnode is the protocol-specific ACPI child (e.g. DVFS)
+		 * that consumers reference, not the parent SCMI device.
+		 */
+		struct fwnode_handle *proto_fw;
+
+		proto_fw = scmi_perf_find_proto_fwnode(sdev);
+		if (proto_fw) {
+			ret = genpd_add_fwnode_provider_onecell(proto_fw,
+								scmi_pd_data);
+			if (ret)
+				goto err;
+		}
 	}
 
 	dev_set_drvdata(dev, scmi_pd_data);
@@ -175,8 +239,16 @@ static void scmi_perf_domain_remove(struct scmi_device *sdev)
 	if (!scmi_pd_data)
 		return;
 
-	if (dev->of_node)
+	if (dev->of_node) {
 		of_genpd_del_provider(dev->of_node);
+	} else {
+		struct scmi_device *sdev = to_scmi_dev(dev);
+		struct fwnode_handle *proto_fw;
+
+		proto_fw = scmi_perf_find_proto_fwnode(sdev);
+		if (proto_fw)
+			genpd_del_fwnode_provider(proto_fw);
+	}
 
 	for (i = 0; i < scmi_pd_data->num_domains; i++)
 		pm_genpd_remove(scmi_pd_data->domains[i]);
