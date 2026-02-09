@@ -2462,6 +2462,33 @@ int pm_genpd_init(struct generic_pm_domain *genpd,
 }
 EXPORT_SYMBOL_GPL(pm_genpd_init);
 
+/**
+ * pm_genpd_lookup_by_name() - Find a power domain by name.
+ * @name: Name of the power domain to find.
+ *
+ * Returns the generic_pm_domain with the matching name, or NULL if not found.
+ * Useful for ACPI platforms where consumers cannot use DT phandles.
+ */
+struct generic_pm_domain *pm_genpd_lookup_by_name(const char *name)
+{
+	struct generic_pm_domain *genpd;
+
+	if (!name)
+		return NULL;
+
+	mutex_lock(&gpd_list_lock);
+	list_for_each_entry(genpd, &gpd_list, gpd_list_node) {
+		if (genpd->name && !strcmp(genpd->name, name)) {
+			mutex_unlock(&gpd_list_lock);
+			return genpd;
+		}
+	}
+	mutex_unlock(&gpd_list_lock);
+
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(pm_genpd_lookup_by_name);
+
 static int genpd_remove(struct generic_pm_domain *genpd)
 {
 	struct gpd_link *l, *link;

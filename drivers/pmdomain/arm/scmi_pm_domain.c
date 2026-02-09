@@ -89,11 +89,6 @@ static int scmi_pm_domain_probe(struct scmi_device *sdev)
 		return num_domains;
 	}
 
-	if (!np) {
-		dev_dbg(dev, "no DT node, skipping genpd registration\n");
-		return 0;
-	}
-
 	scmi_pd = devm_kcalloc(dev, num_domains, sizeof(*scmi_pd), GFP_KERNEL);
 	if (!scmi_pd)
 		return -ENOMEM;
@@ -139,16 +134,26 @@ static int scmi_pm_domain_probe(struct scmi_device *sdev)
 	scmi_pd_data->domains = domains;
 	scmi_pd_data->num_domains = num_domains;
 
-	ret = of_genpd_add_provider_onecell(np, scmi_pd_data);
-	if (ret)
-		goto err_rm_genpds;
+	/* Register DT provider if a device tree node is available.
+	 * Under ACPI, domains are still globally registered by
+	 * pm_genpd_init() and consumers attach by name.
+	 */
+	if (np) {
+		ret = of_genpd_add_provider_onecell(np, scmi_pd_data);
+		if (ret)
+			goto err_rm_genpds;
+	}
 
 	dev_set_drvdata(dev, scmi_pd_data);
+	dev_info(dev, "SCMI power domains registered (%d domains)\n",
+		 num_domains);
 
 	return 0;
 err_rm_genpds:
-	for (i = num_domains - 1; i >= 0; i--)
-		pm_genpd_remove(domains[i]);
+	for (i = num_domains - 1; i >= 0; i--) {
+		if (domains[i])
+			pm_genpd_remove(domains[i]);
+	}
 
 	return ret;
 }
@@ -160,7 +165,8 @@ static void scmi_pm_domain_remove(struct scmi_device *sdev)
 	struct device *dev = &sdev->dev;
 	struct device_node *np = dev->of_node;
 
-	of_genpd_del_provider(np);
+	if (np)
+		of_genpd_del_provider(np);
 
 	scmi_pd_data = dev_get_drvdata(dev);
 	for (i = 0; i < scmi_pd_data->num_domains; i++) {
