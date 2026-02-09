@@ -682,14 +682,20 @@ static int sky1_udphy_init(struct cix_udphy *udphy)
 	int ret;
 	u32 value;
 
-	regmap_update_bits(udphy->usbphy_syscon, udphy->cfg->con_dir[udphy->id].offset,
-		GENMASK(udphy->cfg->con_dir[udphy->id].bit,udphy->cfg->con_dir[udphy->id].bit),
-		(udphy->flip << udphy->cfg->con_dir[udphy->id].bit));
+	if (udphy->usbphy_syscon) {
+		regmap_update_bits(udphy->usbphy_syscon,
+			udphy->cfg->con_dir[udphy->id].offset,
+			GENMASK(udphy->cfg->con_dir[udphy->id].bit,
+				udphy->cfg->con_dir[udphy->id].bit),
+			(udphy->flip << udphy->cfg->con_dir[udphy->id].bit));
 
-	udelay(10);
+		udelay(10);
 
-	regmap_read(udphy->usbphy_syscon, udphy->cfg->con_dir[udphy->id].offset, &value);
-	dev_info(udphy->dev, "sky1_udphy_init: typec dir= 0x%x\n", value);
+		regmap_read(udphy->usbphy_syscon,
+			udphy->cfg->con_dir[udphy->id].offset, &value);
+		dev_info(udphy->dev, "sky1_udphy_init: typec dir= 0x%x\n",
+			 value);
+	}
 
 	//usb rcsu reset is default deassert
 	reset_control_assert(udphy->reset);
