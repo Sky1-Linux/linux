@@ -105,4 +105,5 @@ void cix_disable_clocks(struct snd_sof_dev *sdev, struct cix_clocks *clks)
 EXPORT_SYMBOL(cix_disable_clocks);
 
 MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
+MODULE_DESCRIPTION("SOF common support for CIX platforms");
 MODULE_LICENSE("Dual BSD/GPL");

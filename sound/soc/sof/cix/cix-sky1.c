@@ -575,4 +575,5 @@ module_platform_driver(snd_sof_of_sky1_driver);
 
 MODULE_IMPORT_NS("SND_SOC_SOF_XTENSA");
 MODULE_AUTHOR("Joakim Zhang <joakim.zhang@cixtech.com>");
+MODULE_DESCRIPTION("SOF support for CIX Sky1");
 MODULE_LICENSE("Dual BSD/GPL");

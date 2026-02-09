@@ -381,17 +381,12 @@ static int sky1_audss_gate_prepare(struct clk_hw *hw)
 	struct sky1_clk_gate *sky1_gate = container_of(gate, struct sky1_clk_gate, gate);
 	int ret;
 
-	dev_info(sky1_gate->dev, "gate_prepare: bit %d\n", gate->bit_idx);
-
 	ret = pm_runtime_get_sync(sky1_gate->dev);
 	if (ret < 0) {
 		pm_runtime_put_noidle(sky1_gate->dev);
 		dev_err(sky1_gate->dev, "failed to resume for clock prepare: %d\n", ret);
 		return ret;
 	}
-
-	dev_info(sky1_gate->dev, "gate_prepare: bit %d done, ret=%d\n",
-		 gate->bit_idx, ret);
 	return 0;
 }
 
