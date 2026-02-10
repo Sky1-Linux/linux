@@ -3,6 +3,7 @@
 // Arm DMA-350 driver
 
 #include <linux/acpi.h>
+#include <linux/acpi_dma.h>
 #include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
@@ -1030,6 +1031,31 @@ static struct dma_chan *d350_of_xlate(struct of_phandle_args *dma_spec,
 	return chan;
 }
 
+static struct dma_chan *d350_acpi_xlate(struct acpi_dma_spec *dma_spec,
+				       struct acpi_dma *adma)
+{
+	struct d350 *dmac = adma->data;
+	struct dma_chan *chan;
+	struct d350_chan *dch;
+	u32 request = dma_spec->slave_id;
+	u32 channel_id = dma_spec->chan_id;
+
+	if (channel_id == 0xFF)
+		chan = dma_get_any_slave_channel(&dmac->dma);
+	else if (channel_id < dmac->nchan)
+		chan = dma_get_slave_channel(&dmac->channels[channel_id].vc.chan);
+	else
+		return NULL;
+
+	if (!chan)
+		return NULL;
+
+	dch = to_d350_chan(chan);
+	dch->req_line = request;
+
+	return chan;
+}
+
 static struct dma_async_tx_descriptor *d350_prep_slave_sg(
 	struct dma_chan *chan, struct scatterlist *sgl, unsigned int sg_len,
 	enum dma_transfer_direction dir, unsigned long flags, void *context)
@@ -1239,21 +1265,28 @@ static int d350_probe(struct platform_device *pdev)
 	}
 
 	/*
+	 * Under ACPI, the audio clock controller (CIXH6061) provides clocks
+	 * via clkdev and also activates the audio power domain during its
+	 * probe.  If we got no clock, the clock controller hasn't probed
+	 * yet — defer until it registers its clkdev entries.
+	 */
+	if (!clk && has_acpi_companion(dev))
+		return dev_err_probe(dev, -EPROBE_DEFER,
+				     "waiting for audio clock controller\n");
+
+	/*
 	 * Enable runtime PM to activate power domain. The runtime_resume
 	 * callback handles NULL dmac gracefully during this initial call.
 	 * We then manually enable the clock since dmac isn't set up yet.
 	 */
-	dev_dbg(dev, "DMA-350 probe: enabling pm_runtime\n");
 	pm_runtime_enable(dev);
 	ret = pm_runtime_resume_and_get(dev);
 	if (ret < 0) {
 		pm_runtime_disable(dev);
 		return dev_err_probe(dev, ret, "Failed to power on device\n");
 	}
-	dev_dbg(dev, "DMA-350 probe: pm_runtime_resume_and_get returned %d\n", ret);
 
 	/* Manually enable clock for initial probe (runtime_resume skipped it) */
-	dev_dbg(dev, "DMA-350 probe: enabling clock %pC\n", clk);
 	ret = clk_prepare_enable(clk);
 	if (ret) {
 		pm_runtime_put(dev);
@@ -1271,6 +1304,16 @@ static int d350_probe(struct platform_device *pdev)
 			dev_err(dev, "Failed to get reset: %d\n", ret);
 			goto err_pm_put;
 		}
+		/*
+		 * Under ACPI, the audio reset controller (CIXH6062)
+		 * registers lookup entries during its probe.  If we
+		 * got NULL, it hasn't probed yet — defer.
+		 */
+		if (!rst && has_acpi_companion(dev)) {
+			dev_info(dev, "waiting for audio reset controller\n");
+			ret = -EPROBE_DEFER;
+			goto err_pm_put;
+		}
 		if (rst) {
 			dev_dbg(dev, "DMA-350 probe: deasserting reset\n");
 			ret = reset_control_deassert(rst);
@@ -1281,21 +1324,6 @@ static int d350_probe(struct platform_device *pdev)
 			/* Small delay after reset deassert */
 			usleep_range(10, 20);
 		}
-	}
-
-	dev_dbg(dev, "DMA-350 probe: about to read IIDR at %p + 0x%x\n",
-		base, DMAINFO + IIDR);
-
-	/*
-	 * Devices with "arm,remote-ctrl" (e.g. audio subsystem DMA) live in
-	 * a power domain managed by a remote processor.  Accessing registers
-	 * before that domain is powered causes an unrecoverable SError on
-	 * ARM64.  Skip these until their controller is available.
-	 */
-	if (device_property_present(dev, "arm,remote-ctrl")) {
-		dev_dbg(dev, "DMA-350: remote-controlled, skipping probe\n");
-		ret = -ENODEV;
-		goto err_pm_put;
 	}
 
 	reg = readl_relaxed(base + DMAINFO + IIDR);
@@ -1480,6 +1508,16 @@ static int d350_probe(struct platform_device *pdev)
 		}
 	}
 
+	/* Register for ACPI DMA channel requests */
+	if (has_acpi_companion(dev)) {
+		ret = acpi_dma_controller_register(dev, d350_acpi_xlate, dmac);
+		if (ret) {
+			dev_err(dev, "Failed to register ACPI DMA controller: %d\n", ret);
+			goto err_dma_unregister;
+		}
+		acpi_dev_clear_dependencies(ACPI_COMPANION(dev));
+	}
+
 	dev_info(dev, "DMA-350 r%dp%d initialized with %d channels\n",
 		 r, p, dmac->nchan);
 	return 0;
@@ -1498,6 +1536,8 @@ static void d350_remove(struct platform_device *pdev)
 {
 	struct d350 *dmac = platform_get_drvdata(pdev);
 
+	if (has_acpi_companion(&pdev->dev))
+		acpi_dma_controller_free(&pdev->dev);
 	of_dma_controller_free(pdev->dev.of_node);
 	dma_async_device_unregister(&dmac->dma);
 	of_reserved_mem_device_release(&pdev->dev);

@@ -2,6 +2,7 @@
 // Copyright 2024 Cix Technology Group Co., Ltd.
 
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/module.h>
@@ -1001,7 +1002,19 @@ static int cdns_i2s_mc_probe(struct platform_device *pdev)
 	i2s_mc_priv->capture_dma_data.addr_width = DMA_SLAVE_BUSWIDTH_UNDEFINED;
 	i2s_mc_priv->capture_dma_data.maxburst = 4;
 
-	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, NULL, 0);
+	/*
+	 * Under ACPI, snd_dmaengine_pcm_register() skips DMA channel
+	 * pre-allocation (it only pre-allocates for DT devices).  Provide
+	 * explicit channel names so dmaengine_pcm_new() can request them
+	 * at PCM creation time via acpi_dma_request_slave_chan_by_name().
+	 */
+	static const struct snd_dmaengine_pcm_config pcm_config = {
+		.prepare_slave_config = snd_dmaengine_pcm_prepare_slave_config,
+		.chan_names = { [SNDRV_PCM_STREAM_PLAYBACK] = "tx",
+			        [SNDRV_PCM_STREAM_CAPTURE]  = "rx" },
+	};
+
+	ret = devm_snd_dmaengine_pcm_register(&pdev->dev, &pcm_config, 0);
 	if (ret) {
 		if (ret != -EPROBE_DEFER)
 			dev_err(&pdev->dev, "Failed to register dmaengine component:%d\n", ret);
@@ -1130,6 +1143,12 @@ static const struct of_device_id cdns_i2s_mc_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, cdns_i2s_mc_of_match);
 
+static const struct acpi_device_id cdns_i2s_mc_acpi_match[] = {
+	{ "CIXH6011", (kernel_ulong_t)&sky1_devtype_data },
+	{ },
+};
+MODULE_DEVICE_TABLE(acpi, cdns_i2s_mc_acpi_match);
+
 static struct platform_driver cdns_i2s_mc_driver = {
 	.probe = cdns_i2s_mc_probe,
 	.remove = cdns_i2s_mc_remove,
@@ -1137,6 +1156,7 @@ static struct platform_driver cdns_i2s_mc_driver = {
 		.name = DRV_NAME,
 		.pm = &cdns_i2s_mc_pm_ops,
 		.of_match_table = cdns_i2s_mc_of_match,
+		.acpi_match_table = ACPI_PTR(cdns_i2s_mc_acpi_match),
 	},
 };
 module_platform_driver(cdns_i2s_mc_driver);

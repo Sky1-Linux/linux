@@ -755,6 +755,20 @@ static int sky1_audss_clk_probe(struct platform_device *pdev)
 	pm_runtime_set_active(dev);
 	pm_runtime_enable(dev);
 
+	/*
+	 * Under ACPI, explicitly transition to D0 to invoke the PPRS
+	 * power resource _ON method.  PPRS enables the audio subsystem
+	 * power gates (RCSU PD_CTRL) and triggers memory repair via
+	 * DMRP.  This must happen before any audio subsystem register
+	 * access (CRU, reset controller, DMA, I2S, etc).
+	 */
+	if (has_acpi_companion(dev)) {
+		ret = acpi_device_set_power(ACPI_COMPANION(dev),
+					    ACPI_STATE_D0);
+		if (ret)
+			dev_warn(dev, "ACPI D0 transition failed: %d\n", ret);
+	}
+
 	/* Enable parent clocks and set default rates */
 	ret = sky1_audss_clks_enable(priv);
 	if (ret) {
@@ -850,6 +864,10 @@ static int sky1_audss_clk_probe(struct platform_device *pdev)
 	 * The initial pm_runtime_get_noresume() reference is kept - we
 	 * don't call pm_runtime_put_sync() here.
 	 */
+	/* Allow DLKL consumers (DMA, I2S, etc.) to enumerate now */
+	if (has_acpi_companion(dev))
+		acpi_dev_clear_dependencies(ACPI_COMPANION(dev));
+
 	dev_info(dev, "registered %d clocks\n", AUDSS_MAX_CLKS);
 	return 0;
 

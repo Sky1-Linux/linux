@@ -33,6 +33,7 @@
 #include <drm/drm_debugfs.h>
 #include <drm/drm_file.h>
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -3167,12 +3168,21 @@ static int dptx_register_audio_device(struct trilin_dp *dp)
 		.ops = &dptx_audio_codec_ops,
 		.spdif = 0,
 		.i2s = 1,
+		.no_i2s_capture = 1,
 		.max_i2s_channels = 8,
 		.data = dp,
 	};
+	int id = PLATFORM_DEVID_AUTO;
+	u64 uid;
+
+	/* Use ACPI _UID for deterministic device naming under ACPI */
+	if (ACPI_COMPANION(dp->dev) &&
+	    !acpi_dev_uid_to_integer(ACPI_COMPANION(dp->dev), &uid))
+		id = uid;
+
 	dptx_aud->running = false;
 	dptx_aud->pdev = platform_device_register_data(
-		dp->dev, HDMI_CODEC_DRV_NAME, PLATFORM_DEVID_AUTO, &codec_data,
+		dp->dev, HDMI_CODEC_DRV_NAME, id, &codec_data,
 		sizeof(codec_data));
 
 	return PTR_ERR_OR_ZERO(dptx_aud->pdev);
