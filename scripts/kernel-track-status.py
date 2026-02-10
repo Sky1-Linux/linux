@@ -183,15 +183,19 @@ def main() -> None:
             else:
                 print("upstream=unknown")
 
-        # Check for next RC cycle
-        next_minor = ver.minor + 1
-        next_mm = f"{ver.major}.{next_minor}"
-        next_rc1 = latest_remote_tag("origin", f"refs/tags/v{next_mm}-rc1")
-        if next_rc1:
-            actions.append((
-                f"New RC cycle available ({next_rc1})",
-                f"git checkout rc && git rebase --onto {next_rc1} v{local_rc}",
-            ))
+        # Check for next RC cycle (could be minor bump or major bump, e.g. 6.19 -> 7.0)
+        candidates = [
+            f"{ver.major}.{ver.minor + 1}",  # e.g. 6.20
+            f"{ver.major + 1}.0",             # e.g. 7.0
+        ]
+        for next_mm in candidates:
+            next_rc1 = latest_remote_tag("origin", f"refs/tags/v{next_mm}-rc1")
+            if next_rc1:
+                actions.append((
+                    f"New RC cycle available ({next_rc1})",
+                    f"git checkout rc && git rebase --onto {next_rc1} v{local_rc}",
+                ))
+                break
     else:
         print(f"{RED}branch missing{NC}")
 
