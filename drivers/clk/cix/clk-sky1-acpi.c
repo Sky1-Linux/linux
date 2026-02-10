@@ -116,11 +116,34 @@ static acpi_status sky1_clkt_walk_cb(acpi_handle handle, u32 level,
 	if (!adev)
 		goto out;
 
-	consumer_name = acpi_dev_name(adev);
+	for (i = 0; i < obj->package.count; i++) {
+		union acpi_object *e = &obj->package.elements[i];
+		union acpi_object *ref;
 
-	for (i = 0; i < obj->package.count; i++)
-		sky1_parse_clkt_entry(priv, consumer_name,
-				      &obj->package.elements[i]);
+		/*
+		 * Element 2 (if present) is the actual consumer device
+		 * reference.  Use it instead of the CLKT-owning device.
+		 * Most entries are self-references (consumer == owner),
+		 * but some cross-reference a different device (e.g.,
+		 * DMA1's CLKT registers a clock for DMA0).
+		 */
+		if (e->type == ACPI_TYPE_PACKAGE &&
+		    e->package.count >= 3) {
+			struct acpi_device *cdev;
+
+			ref = &e->package.elements[2];
+			if (ref->type == ACPI_TYPE_LOCAL_REFERENCE) {
+				cdev = acpi_fetch_acpi_dev(ref->reference.handle);
+				if (cdev) {
+					consumer_name = acpi_dev_name(cdev);
+					goto parse;
+				}
+			}
+		}
+		consumer_name = acpi_dev_name(adev);
+parse:
+		sky1_parse_clkt_entry(priv, consumer_name, e);
+	}
 
 out:
 	kfree(buf.pointer);
