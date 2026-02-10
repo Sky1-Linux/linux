@@ -1410,6 +1410,13 @@ static void sky1_pcie_parse_ep_pwr_supply(struct sky1_pcie *pcie)
 	pcie->str_pwron = device_property_read_bool(dev, "sky1,str-pwron");
 	pcie->std_pwron = device_property_read_bool(dev, "sky1,std-pwron");
 
+	/*
+	 * Under ACPI, firmware manages PCIe endpoint power rails via
+	 * power resources.  Skip the regulator lookup.
+	 */
+	if (ACPI_COMPANION(dev))
+		return;
+
 	/* optional power control for device */
 	pcie->vsupply = devm_regulator_get_optional(dev, "vcc-pcie");
 	if (IS_ERR(pcie->vsupply)) {
