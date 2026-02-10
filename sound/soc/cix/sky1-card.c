@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 // Copyright 2024 Cix Technology Group Co., Ltd.
 
+#include <linux/acpi.h>
+#include <linux/module.h>
 #include "card-utils.h"
 
 static int cix_asoc_card_probe(struct platform_device *pdev)
@@ -23,10 +25,13 @@ static int cix_asoc_card_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, card);
 	snd_soc_card_set_drvdata(card, priv);
 
-	ret = cix_card_parse_of(priv);
+	if (dev->of_node)
+		ret = cix_card_parse_of(priv);
+	else
+		ret = cix_card_parse_acpi(priv);
 	if (ret) {
 		if (ret != -EPROBE_DEFER)
-			dev_err(dev, "cix_card_parse_of failed (%d)\n", ret);
+			dev_err(dev, "card parse failed (%d)\n", ret);
 		return ret;
 	}
 
@@ -46,10 +51,17 @@ static const struct of_device_id sky1_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, sky1_of_match);
 
+static const struct acpi_device_id sky1_acpi_match[] = {
+	{ "CIXH6070", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, sky1_acpi_match);
+
 static struct platform_driver sky1_card_pdrv = {
 	.driver = {
 		.name = "sky1-asoc-card",
 		.of_match_table = sky1_of_match,
+		.acpi_match_table = sky1_acpi_match,
 		.pm = &snd_soc_pm_ops,
 	},
 	.probe = cix_asoc_card_probe,

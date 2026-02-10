@@ -68,5 +68,6 @@ struct cix_asoc_card {
 };
 
 int cix_card_parse_of(struct cix_asoc_card *priv);
+int cix_card_parse_acpi(struct cix_asoc_card *priv);
 
 #endif

@@ -25,7 +25,7 @@
 
 	sound: sound {
 		compatible = "cix,sky1-sound-card";
-		model = "cix,sky1";
+		model = "cix_sky1";
 		status = "okay";
 
 		hda: hda {

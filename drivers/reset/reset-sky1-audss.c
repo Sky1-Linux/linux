@@ -102,6 +102,7 @@ static int sky1_audss_reset_probe(struct platform_device *pdev)
 	struct device_node *parent_np;
 	struct sky1_audss_reset *rst;
 	struct regmap *regmap;
+	int ret;
 
 	parent_np = of_get_parent(dev->of_node);
 	regmap = syscon_node_to_regmap(parent_np);
@@ -140,7 +141,34 @@ static int sky1_audss_reset_probe(struct platform_device *pdev)
 	rst->rcdev.of_node = dev->of_node;
 	rst->rcdev.dev = dev;
 
-	return devm_reset_controller_register(dev, &rst->rcdev);
+	ret = devm_reset_controller_register(dev, &rst->rcdev);
+	if (ret)
+		return ret;
+
+	/* Allow DLKL consumers (DMA, I2S, etc.) to enumerate now */
+	if (has_acpi_companion(dev))
+		acpi_dev_clear_dependencies(ACPI_COMPANION(dev));
+
+	/*
+	 * Under ACPI, consumers find reset lines via lookup table
+	 * (equivalent of DT phandle references).  Entries derived
+	 * from vendor DSDT RSTL objects on each consumer device.
+	 */
+	if (has_acpi_companion(dev)) {
+		static struct reset_control_lookup lookups[] = {
+			{ .index = 15, .dev_id = "CIXH1006:00",
+			  .con_id = "dma_reset" },
+			{ .index = 14, .dev_id = "CIXH6020:00",
+			  .con_id = "hda" },
+		};
+		int i;
+
+		for (i = 0; i < ARRAY_SIZE(lookups); i++)
+			lookups[i].provider = dev_name(dev);
+		reset_controller_add_lookup(lookups, ARRAY_SIZE(lookups));
+	}
+
+	return 0;
 }
 
 static const struct of_device_id sky1_audss_reset_of_match[] = {

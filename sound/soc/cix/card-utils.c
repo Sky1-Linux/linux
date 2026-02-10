@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 // Copyright 2024 Cix Technology Group Co., Ltd.
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/mfd/syscon.h>
@@ -634,6 +635,114 @@ err_put_np:
 	return ret;
 }
 EXPORT_SYMBOL(cix_card_parse_of);
+
+/*
+ * ACPI HDMI audio topology for Sky1 Orion O6.
+ *
+ * Under ACPI, the DAI link topology is fixed:
+ *   I2S5 (CIXH6011:02) → hdmi-audio-codec.0 (DP0)
+ *   I2S6 (CIXH6011:03) → hdmi-audio-codec.1 (DP1)
+ *   I2S7 (CIXH6011:04) → hdmi-audio-codec.2 (DP2/eDP)
+ *   I2S8 (CIXH6011:05) → hdmi-audio-codec.3 (DP3)
+ *   I2S9 (CIXH6011:06) → hdmi-audio-codec.4 (DP4)
+ */
+#define SKY1_HDMI_LINKS	5
+
+static const struct {
+	const char *i2s_name;	/* ACPI platform device name */
+	int codec_id;		/* hdmi-audio-codec.N */
+	const char *stream;	/* ALSA stream name */
+} sky1_hdmi_topology[SKY1_HDMI_LINKS] = {
+	{ "CIXH6011:02", 0, "HDMI/DP 0" },
+	{ "CIXH6011:03", 1, "HDMI/DP 1" },
+	{ "CIXH6011:04", 2, "HDMI/DP 2" },
+	{ "CIXH6011:05", 3, "HDMI/DP 3" },
+	{ "CIXH6011:06", 4, "HDMI/DP 4" },
+};
+
+int cix_card_parse_acpi(struct cix_asoc_card *priv)
+{
+	struct snd_soc_card *card = priv->card;
+	struct device *dev = card->dev;
+	struct snd_soc_dai_link *links;
+	struct snd_soc_dai_link_component *comps;
+	struct dai_link_info *link_info;
+	int i;
+
+	card->name = "cix_sky1";
+
+	links = devm_kcalloc(dev, SKY1_HDMI_LINKS, sizeof(*links), GFP_KERNEL);
+	if (!links)
+		return -ENOMEM;
+
+	/* 3 components per link: cpu, codec, platform */
+	comps = devm_kcalloc(dev, SKY1_HDMI_LINKS * 3, sizeof(*comps),
+			     GFP_KERNEL);
+	if (!comps)
+		return -ENOMEM;
+
+	link_info = devm_kcalloc(dev, SKY1_HDMI_LINKS, sizeof(*link_info),
+				 GFP_KERNEL);
+	if (!link_info)
+		return -ENOMEM;
+
+	for (i = 0; i < SKY1_HDMI_LINKS; i++) {
+		struct snd_soc_dai_link_component *cpu = &comps[i * 3];
+		struct snd_soc_dai_link_component *codec = &comps[i * 3 + 1];
+		struct snd_soc_dai_link_component *plat = &comps[i * 3 + 2];
+		struct snd_soc_dai_link *link = &links[i];
+
+		/* CPU DAI: I2S MC playback */
+		cpu->name = sky1_hdmi_topology[i].i2s_name;
+		cpu->dai_name = "i2s-mc-aif1";
+
+		/* Codec DAI: hdmi-audio-codec */
+		codec->name = devm_kasprintf(dev, GFP_KERNEL,
+					     "hdmi-audio-codec.%d",
+					     sky1_hdmi_topology[i].codec_id);
+		if (!codec->name)
+			return -ENOMEM;
+		codec->dai_name = "i2s-hifi";
+
+		/* Platform: DMA is co-located with CPU */
+		plat->name = cpu->name;
+
+		link->cpus = cpu;
+		link->num_cpus = 1;
+		link->codecs = codec;
+		link->num_codecs = 1;
+		link->platforms = plat;
+		link->num_platforms = 1;
+
+		link->name = sky1_hdmi_topology[i].stream;
+		link->stream_name = sky1_hdmi_topology[i].stream;
+		link->id = i;
+
+		link->dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_IB_NF |
+				SND_SOC_DAIFMT_CBC_CFC;
+		link->ops = &cix_dailink_ops;
+		link->init = cix_dailink_init;
+		link->trigger_start = SND_SOC_TRIGGER_ORDER_DEFAULT;
+		link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
+
+		/* HDMI/DP output jack detection */
+		link_info[i].jack_pin[JACK_DPOUT].pin =
+			devm_kasprintf(dev, GFP_KERNEL, "HDMI/DP,pcm=%d", i);
+		if (!link_info[i].jack_pin[JACK_DPOUT].pin)
+			return -ENOMEM;
+		link_info[i].jack_pin[JACK_DPOUT].mask = SND_JACK_LINEOUT;
+		link_info[i].jack_det_mask = JACK_MASK_DPOUT;
+	}
+
+	card->dai_link = links;
+	card->num_links = SKY1_HDMI_LINKS;
+	card->suspend_post = cix_card_suspend_post;
+	card->resume_pre = cix_card_resume_pre;
+	priv->link_info = link_info;
+
+	return 0;
+}
+EXPORT_SYMBOL(cix_card_parse_acpi);
 
 MODULE_DESCRIPTION("Sound Card Utils for Cix Technology");
 MODULE_AUTHOR("Xing.Wang <xing.wang@cixtech.com>");
