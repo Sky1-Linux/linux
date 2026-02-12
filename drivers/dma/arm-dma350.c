@@ -18,6 +18,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/reset.h>
 
@@ -1373,16 +1374,16 @@ static int d350_probe(struct platform_device *pdev)
 	{
 		u32 reg_map[2], ram_map[2];
 
-		if (of_property_read_u32_array(dev->of_node, "arm,reg-map",
-					       reg_map, 2) == 0) {
+		if (device_property_read_u32_array(dev, "arm,reg-map",
+						   reg_map, 2) == 0) {
 			dmac->addr_xlat.reg_cpu = reg_map[0];
 			dmac->addr_xlat.reg_dma = reg_map[1];
 			dev_info(dev, "Address translation: reg 0x%llx -> 0x%llx\n",
 				 dmac->addr_xlat.reg_cpu, dmac->addr_xlat.reg_dma);
 		}
 
-		if (of_property_read_u32_array(dev->of_node, "arm,ram-map",
-					       ram_map, 2) == 0) {
+		if (device_property_read_u32_array(dev, "arm,ram-map",
+						   ram_map, 2) == 0) {
 			dmac->addr_xlat.ram_cpu = ram_map[0];
 			dmac->addr_xlat.ram_dma = ram_map[1];
 			dev_info(dev, "Address translation: ram 0x%llx -> 0x%llx\n",
@@ -1396,6 +1397,25 @@ static int d350_probe(struct platform_device *pdev)
 	 */
 	dmac->remote_ctrl = syscon_regmap_lookup_by_phandle(dev->of_node,
 							    "arm,remote-ctrl");
+	if (IS_ERR(dmac->remote_ctrl) && has_acpi_companion(dev)) {
+		struct fwnode_handle *fw;
+		struct device *syscon_dev;
+
+		fw = fwnode_find_reference(dev_fwnode(dev),
+					  "arm,remote-ctrl", 0);
+		if (!IS_ERR(fw)) {
+			syscon_dev = bus_find_device_by_fwnode(
+					&platform_bus_type, fw);
+			fwnode_handle_put(fw);
+			if (syscon_dev) {
+				dmac->remote_ctrl = dev_get_regmap(
+							syscon_dev, NULL);
+				put_device(syscon_dev);
+				if (!dmac->remote_ctrl)
+					dmac->remote_ctrl = ERR_PTR(-EPROBE_DEFER);
+			}
+		}
+	}
 	if (IS_ERR(dmac->remote_ctrl)) {
 		if (PTR_ERR(dmac->remote_ctrl) == -ENODEV)
 			dmac->remote_ctrl = NULL;  /* Optional */
@@ -1403,9 +1423,9 @@ static int d350_probe(struct platform_device *pdev)
 			dev_dbg(dev, "No remote control regmap: %ld\n",
 				PTR_ERR(dmac->remote_ctrl));
 		dmac->remote_ctrl = NULL;
-	} else {
-		dev_info(dev, "Using remote control regmap for interrupt routing\n");
 	}
+	if (dmac->remote_ctrl)
+		dev_info(dev, "Using remote control regmap for interrupt routing\n");
 
 	dev_dbg(dev, "DMA-350 r%dp%d with %d channels, %d requests\n", r, p, dmac->nchan, dmac->nreq);
 
