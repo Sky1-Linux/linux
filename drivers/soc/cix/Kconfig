@@ -44,6 +44,18 @@ config CIX_ACPI_RESOURCE_LOOKUP
 	  Required for CIX Sky1 ACPI boot with drivers that use
 	  platform_get_resource_byname() or devm_reset_control_get().
 
+config CIX_ACPI_USB_SCAN
+	bool "CIX ACPI USB scan handler"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on ACPI
+	default ARCH_CIX
+	help
+	  Block PNP0D10 (generic xHCI) platform device creation on CIX Sky1
+	  so the vendor USB driver chain (cdnsp-sky1 + cdnsp-plat) can own
+	  the hardware instead of xhci-plat.
+
+	  Required for proper USB controller initialization under ACPI boot.
+
 config CIX_BUS_PERF
 	tristate "CIX Bus Performance State Control driver"
 	depends on ARCH_CIX || COMPILE_TEST
