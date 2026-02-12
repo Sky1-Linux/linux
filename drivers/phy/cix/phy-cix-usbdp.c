@@ -1481,8 +1481,15 @@ static int cix_udphy_probe(struct platform_device *pdev)
 	udphy->phy_init_skip_count = 0;
 
 	if (ACPI_COMPANION(dev)) {
-		udphy->phy_reset = false;
-		dev_info(dev, "ACPI boot: skipping PHY reset (firmware-initialized)\n");
+		/*
+		 * Under ACPI, firmware initializes PHYs for UEFI USB and
+		 * display.  However, cdnsp-sky1 drd_init() resets the USB
+		 * controller hardware, so we must reinitialize the PHY to
+		 * match.  Treat ACPI the same as the DT ROLE_NONE case:
+		 * full reset + init when the consumer calls phy_set_mode().
+		 */
+		udphy->phy_reset = true;
+		udphy->phy_init_skip_count = 0;
 	} else {
 		g_status = ioremap(GOP_STATUS_ADDRESS, GOP_STATUS_SIZE);
 		if (g_status) {
