@@ -25,9 +25,11 @@
 
 DEFINE_DRM_GEM_DMA_FOPS(linlondp_cma_fops);
 
-static bool enable_render = false;
-module_param(enable_render, bool, 0644);
-MODULE_PARM_DESC(enable_render, "Enable render node support (default: false, conflicts with Panthor)");
+/*
+ * The DPU is a display-only device and must NOT expose a render node.
+ * Doing so conflicts with the Panthor GPU render node, causing userspace
+ * compositors to pick the wrong device for rendering.
+ */
 
 static int linlondp_gem_dma_dumb_create(struct drm_file *file,
 					struct drm_device *dev,
@@ -331,9 +333,6 @@ struct linlondp_kms_dev *linlondp_kms_attach(struct linlondp_dev *mdev)
 	struct linlondp_kms_dev *kms;
 	struct drm_device *drm;
 	int err;
-
-	if(enable_render)
-		linlondp_kms_driver.driver_features |= DRIVER_RENDER;
 
 	kms = devm_drm_dev_alloc(mdev->dev, &linlondp_kms_driver,
 				 struct linlondp_kms_dev, base);

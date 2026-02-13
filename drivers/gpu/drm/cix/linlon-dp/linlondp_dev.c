@@ -12,6 +12,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/dma-mapping.h>
+#include <linux/reset.h>
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
@@ -535,6 +536,18 @@ static int linlondp_parse_acpi(struct device *dev, struct linlondp_dev *mdev)
     if (mdev->irq < 0) {
         DRM_ERROR("could not get IRQ number.\n");
         return mdev->irq;
+    }
+
+    /* Acquire reset controls via RSTL (optional — don't fail probe) */
+    mdev->ip_rst = devm_reset_control_get_optional(dev, "ip_reset");
+    if (IS_ERR(mdev->ip_rst)) {
+        dev_warn(dev, "failed to get reset ip_reset: %pe\n", mdev->ip_rst);
+        mdev->ip_rst = NULL;
+    }
+    mdev->rcsu_rst = devm_reset_control_get_optional(dev, "rcsu_reset");
+    if (IS_ERR(mdev->rcsu_rst)) {
+        dev_warn(dev, "failed to get reset rcsu_reset: %pe\n", mdev->rcsu_rst);
+        mdev->rcsu_rst = NULL;
     }
 
     ret = 0;
