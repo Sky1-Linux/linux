@@ -237,7 +237,7 @@ struct drm_gem_object *panthor_gem_create_object(struct drm_device *ddev, size_t
 		return ERR_PTR(-ENOMEM);
 
 	obj->base.base.funcs = &panthor_gem_funcs;
-	obj->base.map_wc = !ptdev->coherent;
+	obj->base.map_wc = ptdev->coherency_mode != PANTHOR_COHERENCY_ACE;
 	mutex_init(&obj->label.lock);
 
 	panthor_gem_debugfs_bo_init(obj);
