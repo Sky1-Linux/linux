@@ -56,6 +56,20 @@ config CIX_ACPI_USB_SCAN
 
 	  Required for proper USB controller initialization under ACPI boot.
 
+config CIX_ACPI_GPU_SCAN
+	bool "CIX ACPI GPU coherency scan handler"
+	depends on ARCH_CIX || COMPILE_TEST
+	depends on ACPI
+	default ARCH_CIX
+	help
+	  Override _CCA (Cache Coherency Attribute) for the CIX Sky1 GPU
+	  (CIXH5000) from coherent to non-coherent during ACPI enumeration.
+
+	  The Sky1 DSDT declares the GPU as coherent (_CCA=1) but the SoC
+	  was designed for non-coherent GPU operation.  Without this fix,
+	  the GPU enables ACE-Lite coherency causing stale framebuffer
+	  reads by the non-coherent DPU (display corruption).
+
 config CIX_BUS_PERF
 	tristate "CIX Bus Performance State Control driver"
 	depends on ARCH_CIX || COMPILE_TEST
