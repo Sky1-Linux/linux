@@ -9,6 +9,7 @@
 #include <linux/platform_device.h>
 #include <linux/component.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_module.h>
 #include <drm/drm_of.h>
@@ -16,9 +17,10 @@
 #include "linlondp_dev.h"
 #include "linlondp_kms.h"
 
-static bool enable_fb = true;
-module_param_named(enable_fb, enable_fb, bool, 0644);
-MODULE_PARM_DESC(enable_fb, "Enable/Disable drm framebuffer support");
+/* Framebuffer emulation (fbdev) is always enabled — required for console
+ * and boot splash.  Previously a module parameter; hardcoded to avoid
+ * accidental misconfiguration.
+ */
 
 struct linlondp_drv {
 	struct linlondp_dev *mdev;
@@ -78,8 +80,7 @@ static int linlondp_bind(struct device *dev)
 	}
 
 	dev_set_drvdata(dev, mdrv);
-	if (enable_fb)
-		drm_client_setup(&mdrv->kms->base, NULL);
+	drm_client_setup(&mdrv->kms->base, NULL);
 
 	if (mdrv->mdev->enabled_by_gop)
 		pm_runtime_set_active(dev);
@@ -164,7 +165,7 @@ static int linlondp_platform_probe(struct platform_device *pdev)
 	struct device_node *of_child;
 	const char *tmp_name = NULL;
 
-	dev_dbg(dev, "probe enter, enable_fb=%d\n", enable_fb);
+	dev_dbg(dev, "probe enter\n");
 #if !IS_ENABLED(CONFIG_DRM_CIX_COMPONENT_BIND_BYPASSED)
 	if (has_acpi_companion(dev)) {
 		dev_dbg(dev, "probe via ACPI\n");
@@ -313,8 +314,8 @@ static int __maybe_unused linlondp_pm_restore(struct device *dev)
 {
 	struct linlondp_drv *mdrv = dev_get_drvdata(dev);
 
-	of_property_read_u32(dev->of_node, "enabled_by_gop",
-			     (u32 *)&mdrv->mdev->enabled_by_gop);
+	device_property_read_u32(dev, "enabled_by_gop",
+				(u32 *)&mdrv->mdev->enabled_by_gop);
 
 	if (!pm_runtime_status_suspended(dev))
 		linlondp_dev_resume(mdrv->mdev);
