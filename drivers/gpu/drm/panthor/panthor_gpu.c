@@ -49,8 +49,16 @@ struct panthor_gpu {
 
 static void panthor_gpu_coherency_set(struct panthor_device *ptdev)
 {
-	gpu_write(ptdev, GPU_COHERENCY_PROTOCOL,
-		  ptdev->coherent ? GPU_COHERENCY_ACE_LITE : GPU_COHERENCY_NONE);
+	u32 val = ptdev->coherency_mode;
+
+	if (val != PANTHOR_COHERENCY_NONE) {
+		u32 features = gpu_read(ptdev, GPU_COHERENCY_FEATURES);
+
+		if (features & GPU_COHERENCY_SHAREABLE_CACHE)
+			val |= GPU_COHERENCY_SHAREABLE_CACHE;
+	}
+
+	gpu_write(ptdev, GPU_COHERENCY_PROTOCOL, val);
 }
 
 static void panthor_gpu_irq_handler(struct panthor_device *ptdev, u32 status)

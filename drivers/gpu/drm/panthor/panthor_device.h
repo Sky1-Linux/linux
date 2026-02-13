@@ -19,6 +19,27 @@
 #include <drm/gpu_scheduler.h>
 #include <drm/panthor_drm.h>
 
+/**
+ * enum panthor_coherency_mode - GPU bus coherency protocol
+ *
+ * Determines how the GPU participates in the system coherency fabric.
+ * Values match the GPU_COHERENCY_PROTOCOL register encoding.
+ */
+enum panthor_coherency_mode {
+	/** @PANTHOR_COHERENCY_ACE_LITE: GPU is RN-I on CHI fabric.
+	 * L2 evictions route through HN-F/SLC, making WB data visible
+	 * to non-snooping masters. No NC memattr needed. */
+	PANTHOR_COHERENCY_ACE_LITE = 0,
+
+	/** @PANTHOR_COHERENCY_ACE: Full CPU-GPU coherency via snooping.
+	 * Page table walks use outer-shareable, GEM uses cached mappings. */
+	PANTHOR_COHERENCY_ACE = 1,
+
+	/** @PANTHOR_COHERENCY_NONE: GPU outside coherency domain.
+	 * Requires NC memattr when no IOMMU is present. */
+	PANTHOR_COHERENCY_NONE = 31,
+};
+
 struct panthor_csf;
 struct panthor_csf_ctx;
 struct panthor_device;
@@ -127,8 +148,8 @@ struct panthor_device {
 		struct clk *backup[2];
 	} clks;
 
-	/** @coherent: True if the CPU/GPU are memory coherent. */
-	bool coherent;
+	/** @coherency_mode: GPU bus coherency protocol. */
+	enum panthor_coherency_mode coherency_mode;
 
 	/** @gpu_info: GPU information. */
 	struct drm_panthor_gpu_info gpu_info;

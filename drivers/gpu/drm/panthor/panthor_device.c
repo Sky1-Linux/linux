@@ -5,7 +5,9 @@
 
 #include <linux/clk.h>
 #include <linux/delay.h>
+#include <linux/iommu.h>
 #include <linux/mm.h>
+#include <linux/moduleparam.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
@@ -132,21 +134,40 @@ static int sky1_smc_scmi_power_set(struct device *dev, u32 domain, u32 state)
 	return 0;
 }
 
+static bool panthor_force_noncoherent;
+module_param_named(force_noncoherent, panthor_force_noncoherent, bool, 0444);
+MODULE_PARM_DESC(force_noncoherent,
+	"Force GPU to non-coherent mode even when firmware reports coherent");
+
 static int panthor_gpu_coherency_init(struct panthor_device *ptdev)
 {
-	ptdev->coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
+	bool dma_coherent = device_get_dma_attr(ptdev->base.dev) == DEV_DMA_COHERENT;
 
-	if (!ptdev->coherent)
-		return 0;
-
-	/* Check if the ACE-Lite coherency protocol is actually supported by the GPU.
-	 * ACE protocol has never been supported for command stream frontend GPUs.
+	/*
+	 * Sky1 SoC: The GPU hardware supports full ACE (128/256-bit AMBA 4
+	 * ACE master), but the platform uses ACE-Lite (DT system-coherency=0).
+	 * The DPU is non-snooping and reads from SLC/DRAM, so ACE-Lite is the
+	 * correct choice: GPU L2 evictions route through HN-F and are absorbed
+	 * into the SLC, making WB data visible to the DPU without NC memattr.
 	 */
-	if ((gpu_read(ptdev, GPU_COHERENCY_FEATURES) &
-		      GPU_COHERENCY_PROT_BIT(ACE_LITE)))
+	if (panthor_is_sky1(ptdev)) {
+		ptdev->coherency_mode = PANTHOR_COHERENCY_ACE_LITE;
+		drm_info(&ptdev->base, "Using ACE-Lite bus coherency (Sky1)\n");
+	} else if (panthor_force_noncoherent || !dma_coherent) {
+		ptdev->coherency_mode = PANTHOR_COHERENCY_NONE;
+	} else {
+		ptdev->coherency_mode = PANTHOR_COHERENCY_ACE_LITE;
+	}
+
+	if (ptdev->coherency_mode == PANTHOR_COHERENCY_NONE)
 		return 0;
 
-	drm_err(&ptdev->base, "Coherency not supported by the device");
+	/* Verify hardware supports the selected protocol. */
+	if (gpu_read(ptdev, GPU_COHERENCY_FEATURES) &
+	    GPU_COHERENCY_PROT_BIT(ACE_LITE))
+		return 0;
+
+	drm_err(&ptdev->base, "ACE-Lite not supported by hardware");
 	return -ENOTSUPP;
 }
 
@@ -570,6 +591,11 @@ int panthor_device_init(struct panthor_device *ptdev)
 	ret = panthor_gpu_coherency_init(ptdev);
 	if (ret)
 		goto err_unplug_gpu;
+
+	if (ptdev->coherency_mode == PANTHOR_COHERENCY_NONE &&
+	    !device_iommu_mapped(ptdev->base.dev))
+		drm_info(&ptdev->base,
+			 "GPU not behind IOMMU; using non-cacheable memory attributes\n");
 
 	ret = panthor_mmu_init(ptdev);
 	if (ret)
