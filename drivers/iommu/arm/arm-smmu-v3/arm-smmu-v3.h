@@ -457,7 +457,9 @@ static inline unsigned int arm_smmu_cdtab_l2_idx(unsigned int ssid)
 #define EVT_ID_BAD_STREAMID_CONFIG	0x02
 #define EVT_ID_STE_FETCH_FAULT		0x03
 #define EVT_ID_BAD_STE_CONFIG		0x04
+#define EVT_ID_BAD_ATS_TREQ		0x05
 #define EVT_ID_STREAM_DISABLED_FAULT	0x06
+#define EVT_ID_TRANSL_FORBIDDEN		0x07
 #define EVT_ID_BAD_SUBSTREAMID_CONFIG	0x08
 #define EVT_ID_CD_FETCH_FAULT		0x09
 #define EVT_ID_BAD_CD_CONFIG		0x0a
@@ -774,6 +776,7 @@ struct arm_smmu_device {
 #define ARM_SMMU_OPT_MSIPOLL		(1 << 2)
 #define ARM_SMMU_OPT_CMDQ_FORCE_SYNC	(1 << 3)
 #define ARM_SMMU_OPT_TEGRA241_CMDQV	(1 << 4)
+#define ARM_SMMU_OPT_PCIE_ATS_OVERRIDE	(1 << 5)
 	u32				options;
 
 	struct arm_smmu_cmdq		cmdq;
@@ -803,6 +806,14 @@ struct arm_smmu_device {
 
 	struct rb_root			streams;
 	struct mutex			streams_mutex;
+
+	/* Per-SID event suppression for noisy streams (e.g. PCIe DTI ATS) */
+#define SMMU_EVT_SUPPRESS_SLOTS		8
+#define SMMU_EVT_SUPPRESS_THRESHOLD	3
+	struct {
+		u32			sid;
+		u32			count;
+	} evt_suppress[SMMU_EVT_SUPPRESS_SLOTS];
 };
 
 struct arm_smmu_stream {
