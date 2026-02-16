@@ -105,10 +105,18 @@ static inline bool topology_core_has_smt(int cpu)
 	return cpu_topology[cpu].thread_id != -1;
 }
 
-#else
+#ifdef CONFIG_CPU_FREQ
+struct cpufreq_policy;
+void topology_update_freq_ref(struct cpufreq_policy *policy);
+#endif
+#else /* !CONFIG_GENERIC_ARCH_TOPOLOGY */
 
 static inline bool topology_core_has_smt(int cpu) { return false; }
 
+#ifdef CONFIG_CPU_FREQ
+struct cpufreq_policy;
+static inline void topology_update_freq_ref(struct cpufreq_policy *policy) { }
+#endif
 #endif /* CONFIG_GENERIC_ARCH_TOPOLOGY */
 
 #endif /* _LINUX_ARCH_TOPOLOGY_H_ */
