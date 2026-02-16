@@ -806,7 +806,7 @@ static const struct of_device_id scmi_of_match[] = {
 };
 
 DEFINE_SCMI_TRANSPORT_DRIVER(scmi_virtio, scmi_virtio_driver, scmi_virtio_desc,
-			     scmi_of_match, core);
+			     scmi_of_match, NULL, core);
 
 static int scmi_vio_probe(struct virtio_device *vdev)
 {
