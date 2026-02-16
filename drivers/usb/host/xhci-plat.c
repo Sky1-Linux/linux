@@ -90,6 +90,19 @@ static void xhci_plat_quirks(struct device *dev, struct xhci_hcd *xhci)
 	struct xhci_plat_priv *priv = xhci_to_priv(xhci);
 
 	xhci->quirks |= priv->quirks;
+
+	/*
+	 * For ACPI platform controllers, auto-detect LPM support from
+	 * hardware capability registers.  Under DT, the usb3-lpm-capable
+	 * property is used instead (set from device properties in probe).
+	 * If HCS_PARAMS3 reports non-zero U1/U2 exit latencies, the
+	 * controller supports USB3 LPM.
+	 */
+	if (!(xhci->quirks & XHCI_LPM_SUPPORT) &&
+	    is_acpi_device_node(dev_fwnode(dev)) &&
+	    (HCS_U1_LATENCY(xhci->hcs_params3) |
+	     HCS_U2_LATENCY(xhci->hcs_params3)))
+		xhci->quirks |= XHCI_LPM_SUPPORT;
 }
 
 /* called during probe() after chip reset completes */
@@ -359,7 +372,13 @@ int xhci_plat_probe(struct platform_device *pdev, struct device *sysdev, const s
 	 * Prevent runtime pm from being on as default, users should enable
 	 * runtime pm using power/control in sysfs.
 	 */
-	pm_runtime_forbid(&pdev->dev);
+	if (xhci->quirks & XHCI_DEFAULT_PM_RUNTIME_ALLOW) {
+		pm_runtime_use_autosuspend(&pdev->dev);
+		pm_runtime_set_autosuspend_delay(&pdev->dev, 2000);
+		pm_runtime_allow(&pdev->dev);
+	} else {
+		pm_runtime_forbid(&pdev->dev);
+	}
 
 	return 0;
 
