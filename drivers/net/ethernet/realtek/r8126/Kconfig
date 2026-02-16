@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: GPL-2.0-only
+config R8126
+	tristate "Realtek RTL8126 PCI 5GbE Ethernet support"
+	depends on PCI
+	select CRC32
+	help
+	  Realtek RTL8126 PCI 5 Gigabit Ethernet adapter driver.
+
+	  To compile this driver as a module, choose M here. The module
+	  will be called r8126.
