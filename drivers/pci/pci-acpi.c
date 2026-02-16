@@ -9,9 +9,11 @@
 
 #include <linux/delay.h>
 #include <linux/init.h>
+#include <linux/io.h>
 #include <linux/iommu.h>
 #include <linux/irqdomain.h>
 #include <linux/pci.h>
+#include <linux/sizes.h>
 #include <linux/msi.h>
 #include <linux/pci_hotplug.h>
 #include <linux/module.h>
@@ -1601,6 +1603,7 @@ static int pci_acpi_root_prepare_resources(struct acpi_pci_root_info *ci)
 		if (!(entry->res->flags & IORESOURCE_WINDOW))
 			resource_list_destroy_entry(entry);
 	}
+
 	return status;
 }
 

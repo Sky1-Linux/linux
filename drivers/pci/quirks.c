@@ -2537,6 +2537,10 @@ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_ASMEDIA, 0x1080, quirk_disable_aspm_l0s_l
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_FREESCALE, 0x0451, quirk_disable_aspm_l0s_l1);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_PASEMI, 0xa002, quirk_disable_aspm_l0s_l1);
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_HUAWEI, 0x1105, quirk_disable_aspm_l0s_l1);
+/* Phison E13T NVMe - ASPM causes link instability */
+DECLARE_PCI_FIXUP_HEADER(0x1987, 0x5013, quirk_disable_aspm_l0s_l1);
+/* Kingston NVMe - ASPM causes link instability */
+DECLARE_PCI_FIXUP_HEADER(0x2646, 0x501d, quirk_disable_aspm_l0s_l1);
 
 /*
  * Some Pericom PCIe-to-PCI bridges in reverse mode need the PCIe Retrain
@@ -2916,6 +2920,27 @@ DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_NVIDIA, 0x229c,
 DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_NVIDIA, 0x229e,
 			      PCI_CLASS_BRIDGE_PCI, 8,
 			      pci_quirk_nvidia_tegra_disable_rp_msi);
+
+/*
+ * CIX CD8180 PCIe root ports (used in Sky1/Orion SoCs) advertise MSI-X
+ * capability but the MSI-X table is located in BAR0 which doesn't exist.
+ * Accessing the non-existent BAR causes an SError. Disable MSI/MSI-X for
+ * these root ports; downstream devices can still use MSI.
+ *
+ * These root ports appear with two different vendor IDs:
+ * - 0x17cd (Cadence) with device 0x0000 - raw hardware ID
+ * - 0x1f6c (CIX Technology) with device 0x0001 - vendor-programmed ID
+ */
+static void pci_quirk_cix_disable_rp_msi(struct pci_dev *dev)
+{
+	dev->no_msi = 1;
+}
+DECLARE_PCI_FIXUP_CLASS_EARLY(0x17cd, 0x0000,
+			      PCI_CLASS_BRIDGE_PCI, 8,
+			      pci_quirk_cix_disable_rp_msi);
+DECLARE_PCI_FIXUP_CLASS_EARLY(0x1f6c, 0x0001,
+			      PCI_CLASS_BRIDGE_PCI, 8,
+			      pci_quirk_cix_disable_rp_msi);
 
 /*
  * Some versions of the MCP55 bridge from Nvidia have a legacy IRQ routing
@@ -6380,3 +6405,41 @@ static void pci_mask_replay_timer_timeout(struct pci_dev *pdev)
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_GLI, 0x9750, pci_mask_replay_timer_timeout);
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_GLI, 0x9755, pci_mask_replay_timer_timeout);
 #endif
+
+/*
+ * CIX Sky1 Cadence PCIe root ports can't handle D3hot/D3cold power state
+ * transitions or ASPM link state changes.  Under DT boot, pci-sky1
+ * disables power state changes in hardware.  Under ACPI boot, prevent
+ * runtime PM from suspending both the bridges and their downstream
+ * devices, since the Cadence IP link drops on any D-state transition.
+ */
+static void quirk_cadence_bridge_no_d3(struct pci_dev *dev)
+{
+	if (acpi_disabled)
+		return;
+
+	pm_runtime_forbid(&dev->dev);
+	pci_d3cold_disable(dev);
+	pci_disable_link_state(dev, PCIE_LINK_STATE_ALL);
+	pci_info(dev, "disabled D3 and ASPM for Cadence bridge\n");
+}
+DECLARE_PCI_FIXUP_CLASS_FINAL(0x17cd, PCI_ANY_ID,
+			      PCI_CLASS_BRIDGE_PCI, 8,
+			      quirk_cadence_bridge_no_d3);
+
+static void quirk_cadence_endpoint_no_d3(struct pci_dev *dev)
+{
+	struct pci_dev *bridge;
+
+	if (acpi_disabled)
+		return;
+
+	bridge = pci_upstream_bridge(dev);
+	if (!bridge || bridge->vendor != 0x17cd)
+		return;
+
+	pm_runtime_forbid(&dev->dev);
+	pci_info(dev, "disabled runtime PM (behind Cadence bridge)\n");
+}
+DECLARE_PCI_FIXUP_FINAL(PCI_ANY_ID, PCI_ANY_ID,
+			quirk_cadence_endpoint_no_d3);
