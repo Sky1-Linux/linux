@@ -81,6 +81,7 @@ DEFINE_MUTEX(arm_smmu_asid_lock);
 static struct arm_smmu_option_prop arm_smmu_options[] = {
 	{ ARM_SMMU_OPT_SKIP_PREFETCH, "hisilicon,broken-prefetch-cmd" },
 	{ ARM_SMMU_OPT_PAGE0_REGS_ONLY, "cavium,cn9900-broken-page1-regspace"},
+	{ ARM_SMMU_OPT_PCIE_ATS_OVERRIDE, "cix,pcie-ats-override" },
 	{ 0, NULL},
 };
 
@@ -88,7 +89,9 @@ static const char * const event_str[] = {
 	[EVT_ID_BAD_STREAMID_CONFIG] = "C_BAD_STREAMID",
 	[EVT_ID_STE_FETCH_FAULT] = "F_STE_FETCH",
 	[EVT_ID_BAD_STE_CONFIG] = "C_BAD_STE",
+	[EVT_ID_BAD_ATS_TREQ] = "C_BAD_ATS_TREQ",
 	[EVT_ID_STREAM_DISABLED_FAULT] = "F_STREAM_DISABLED",
+	[EVT_ID_TRANSL_FORBIDDEN] = "F_TRANSL_FORBIDDEN",
 	[EVT_ID_BAD_SUBSTREAMID_CONFIG] = "C_BAD_SUBSTREAMID",
 	[EVT_ID_CD_FETCH_FAULT] = "F_CD_FETCH",
 	[EVT_ID_BAD_CD_CONFIG] = "C_BAD_CD",
@@ -1682,7 +1685,10 @@ void arm_smmu_make_cdtable_ste(struct arm_smmu_ste *target,
 			 STRTAB_STE_1_S1STALLD :
 			 0) |
 		FIELD_PREP(STRTAB_STE_1_EATS,
-			   ats_enabled ? STRTAB_STE_1_EATS_TRANS : 0));
+			   (ats_enabled ||
+			    ((smmu->options & ARM_SMMU_OPT_PCIE_ATS_OVERRIDE) &&
+			     dev_is_pci(master->dev))) ?
+				STRTAB_STE_1_EATS_TRANS : 0));
 
 	if ((smmu->features & ARM_SMMU_FEAT_ATTR_TYPES_OVR) &&
 	    s1dss == STRTAB_STE_1_S1DSS_BYPASS)
@@ -1734,7 +1740,10 @@ void arm_smmu_make_s2_domain_ste(struct arm_smmu_ste *target,
 
 	target->data[1] = cpu_to_le64(
 		FIELD_PREP(STRTAB_STE_1_EATS,
-			   ats_enabled ? STRTAB_STE_1_EATS_TRANS : 0));
+			   (ats_enabled ||
+			    ((smmu->options & ARM_SMMU_OPT_PCIE_ATS_OVERRIDE) &&
+			     dev_is_pci(master->dev))) ?
+				STRTAB_STE_1_EATS_TRANS : 0));
 
 	if (pgtbl_cfg->quirks & IO_PGTABLE_QUIRK_ARM_S2FWB)
 		target->data[1] |= cpu_to_le64(STRTAB_STE_1_S2FWB);
@@ -1885,6 +1894,7 @@ static int arm_smmu_handle_event(struct arm_smmu_device *smmu, u64 *evt,
 	switch (event->id) {
 	case EVT_ID_BAD_STE_CONFIG:
 	case EVT_ID_STREAM_DISABLED_FAULT:
+	case EVT_ID_TRANSL_FORBIDDEN:
 	case EVT_ID_BAD_SUBSTREAMID_CONFIG:
 	case EVT_ID_BAD_CD_CONFIG:
 	case EVT_ID_TRANSLATION_FAULT:
@@ -1999,6 +2009,39 @@ static void arm_smmu_dump_event(struct arm_smmu_device *smmu, u64 *raw,
 	}
 }
 
+/*
+ * Per-SID event auto-suppression.  After SMMU_EVT_SUPPRESS_THRESHOLD events
+ * from the same stream ID, further events are silently dropped.  This handles
+ * hardware that generates continuous faults on SIDs that software cannot
+ * control (e.g. PCIe DTI ATS masters with secure-only registers).
+ *
+ * Returns true if the event should be suppressed.
+ */
+static bool arm_smmu_evt_suppressed(struct arm_smmu_device *smmu, u32 sid)
+{
+	int i, free_slot = -1;
+
+	for (i = 0; i < SMMU_EVT_SUPPRESS_SLOTS; i++) {
+		if (smmu->evt_suppress[i].count && smmu->evt_suppress[i].sid == sid) {
+			if (++smmu->evt_suppress[i].count == SMMU_EVT_SUPPRESS_THRESHOLD) {
+				dev_warn(smmu->dev,
+					 "auto-suppressing events for sid %#x (%u seen)\n",
+					 sid, smmu->evt_suppress[i].count);
+			}
+			return smmu->evt_suppress[i].count >= SMMU_EVT_SUPPRESS_THRESHOLD;
+		}
+		if (!smmu->evt_suppress[i].count && free_slot < 0)
+			free_slot = i;
+	}
+
+	/* New SID — start tracking */
+	if (free_slot >= 0) {
+		smmu->evt_suppress[free_slot].sid = sid;
+		smmu->evt_suppress[free_slot].count = 1;
+	}
+	return false;
+}
+
 static irqreturn_t arm_smmu_evtq_thread(int irq, void *dev)
 {
 	u64 evt[EVTQ_ENT_DWORDS];
@@ -2012,9 +2055,11 @@ static irqreturn_t arm_smmu_evtq_thread(int irq, void *dev)
 	do {
 		while (!queue_remove_raw(q, evt)) {
 			arm_smmu_decode_event(smmu, evt, &event);
+			if (arm_smmu_evt_suppressed(smmu, event.sid))
+				goto evt_next;
 			if (arm_smmu_handle_event(smmu, evt, &event))
 				arm_smmu_dump_event(smmu, evt, &event, &rs);
-
+evt_next:
 			put_device(event.dev);
 			cond_resched();
 		}
@@ -4738,6 +4783,43 @@ static void __iomem *arm_smmu_ioremap(struct device *dev, resource_size_t start,
 	return devm_ioremap_resource(dev, &res);
 }
 
+/*
+ * Install bypass STEs for stream IDs specified in device tree.
+ * This handles devices that are already active at boot (e.g., display
+ * controllers left running by bootloader) before the kernel driver
+ * has attached them to the IOMMU.
+ */
+static void arm_smmu_dt_install_bypass_ste(struct arm_smmu_device *smmu)
+{
+	struct device_node *np = smmu->dev->of_node;
+	int count, i;
+	u32 sid;
+
+	if (!np)
+		return;
+
+	count = of_property_count_u32_elems(np, "arm,boot-active-sids");
+	if (count <= 0)
+		return;
+
+	for (i = 0; i < count; i++) {
+		if (of_property_read_u32_index(np, "arm,boot-active-sids",
+					       i, &sid))
+			continue;
+
+		if (arm_smmu_init_sid_strtab(smmu, sid)) {
+			dev_err(smmu->dev,
+				"boot-active SID(0x%x) bypass failed\n", sid);
+			continue;
+		}
+
+		arm_smmu_make_bypass_ste(smmu,
+			arm_smmu_get_step_for_sid(smmu, sid));
+		dev_dbg(smmu->dev,
+			"installed bypass STE for boot-active SID 0x%x\n", sid);
+	}
+}
+
 static void arm_smmu_rmr_install_bypass_ste(struct arm_smmu_device *smmu)
 {
 	struct list_head rmr_list;
@@ -4903,6 +4985,9 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
 
 	/* Check for RMRs and install bypass STEs if any */
 	arm_smmu_rmr_install_bypass_ste(smmu);
+
+	/* Install bypass STEs for boot-active devices from DT */
+	arm_smmu_dt_install_bypass_ste(smmu);
 
 	/* Reset the device */
 	ret = arm_smmu_device_reset(smmu);

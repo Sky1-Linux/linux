@@ -5,6 +5,7 @@
  * Copyright (C) 2009 - 2014 Xilinx, Inc.
  */
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
@@ -1449,6 +1450,14 @@ static const struct of_device_id cdns_i2c_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, cdns_i2c_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id cdns_i2c_acpi_match[] = {
+	{ "CIXH200B", 0 },
+	{ }
+};
+MODULE_DEVICE_TABLE(acpi, cdns_i2c_acpi_match);
+#endif
+
 /**
  * cdns_i2c_detect_transfer_size - Detect the maximum transfer size supported
  * @id: Device private data structure
@@ -1639,6 +1648,7 @@ static struct platform_driver cdns_i2c_drv = {
 	.driver = {
 		.name  = DRIVER_NAME,
 		.of_match_table = cdns_i2c_of_match,
+		.acpi_match_table = ACPI_PTR(cdns_i2c_acpi_match),
 		.pm = &cdns_i2c_dev_pm_ops,
 	},
 	.probe  = cdns_i2c_probe,
