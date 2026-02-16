@@ -23,6 +23,8 @@
 #include <linux/thermal.h>
 #include <linux/units.h>
 
+#include <linux/cix/cix_cpu_ipa.h>
+
 #include "thermal_trace.h"
 
 /*
@@ -251,7 +253,13 @@ static int cpufreq_get_requested_power(struct thermal_cooling_device *cdev,
 
 	cpufreq_cdev->last_load = total_load;
 
-	*power = get_dynamic_power(cpufreq_cdev, freq);
+	if (IS_ENABLED(CONFIG_CIX_CPU_IPA)) {
+		/* Use real measured power from CIX IPA hardware */
+		*power = cix_get_static_power_cpus(policy->cpus) +
+			 cix_get_dynamic_power_cpus(policy->cpus);
+	} else {
+		*power = get_dynamic_power(cpufreq_cdev, freq);
+	}
 
 	trace_thermal_power_cpu_get_power_simple(policy->cpu, *power);
 
@@ -293,6 +301,9 @@ static int cpufreq_state2power(struct thermal_cooling_device *cdev,
 
 	*power = cpu_freq_to_power(cpufreq_cdev, freq) * num_cpus;
 
+	if (IS_ENABLED(CONFIG_CIX_CPU_IPA))
+		*power += cix_get_static_power_cpus(cpufreq_cdev->policy->cpus);
+
 	return 0;
 }
 
@@ -315,12 +326,24 @@ static int cpufreq_power2state(struct thermal_cooling_device *cdev,
 			       u32 power, unsigned long *state)
 {
 	unsigned int target_freq;
-	u32 last_load, normalised_power;
+	u32 last_load, normalised_power, dynamic_power;
 	struct cpufreq_cooling_device *cpufreq_cdev = cdev->devdata;
 	struct cpufreq_policy *policy = cpufreq_cdev->policy;
 
+	/*
+	 * When using real IPA power, subtract static power from the budget
+	 * since only dynamic power can be controlled via frequency scaling.
+	 */
+	if (IS_ENABLED(CONFIG_CIX_CPU_IPA)) {
+		u32 static_power = cix_get_static_power_cpus(policy->cpus);
+
+		dynamic_power = (power > static_power) ? power - static_power : 0;
+	} else {
+		dynamic_power = power;
+	}
+
 	last_load = cpufreq_cdev->last_load ?: 1;
-	normalised_power = (power * 100) / last_load;
+	normalised_power = (dynamic_power * 100) / last_load;
 	target_freq = cpu_power_to_freq(cpufreq_cdev, normalised_power);
 
 	*state = get_level(cpufreq_cdev, target_freq);
