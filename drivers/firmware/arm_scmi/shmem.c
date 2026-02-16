@@ -5,11 +5,13 @@
  * Copyright (C) 2019-2024 ARM Ltd.
  */
 
+#include <linux/acpi.h>
 #include <linux/ktime.h>
 #include <linux/io.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
 #include <linux/processor.h>
+#include <linux/property.h>
 #include <linux/types.h>
 
 #include <linux/bug.h>
@@ -191,6 +193,93 @@ static bool shmem_channel_intr_enabled(struct scmi_shared_mem __iomem *shmem)
 	return ioread32(&shmem->flags) & SCMI_SHMEM_FLAG_INTR_ENABLED;
 }
 
+#ifdef CONFIG_ACPI
+static void __iomem *shmem_acpi_setup_iomap(struct scmi_chan_info *cinfo,
+					     struct device *dev, bool tx,
+					     struct resource *res,
+					     struct scmi_shmem_io_ops **ops)
+{
+	struct fwnode_reference_args args;
+	struct resource_entry *rentry;
+	const char *desc = tx ? "Tx" : "Rx";
+	int idx = tx ? 0 : 1;
+	struct acpi_device *adev;
+	struct resource lres = {};
+	resource_size_t size;
+	void __iomem *addr;
+	LIST_HEAD(res_list);
+	int ret;
+
+	if (!res)
+		res = &lres;
+
+	ret = fwnode_property_get_reference_args(dev_fwnode(cinfo->dev),
+						 "shmem", NULL, 0, idx, &args);
+	if (ret) {
+		dev_err(cinfo->dev,
+			"failed to get SCMI %s shmem reference\n", desc);
+		return IOMEM_ERR_PTR(ret);
+	}
+
+	if (!is_acpi_device_node(args.fwnode)) {
+		fwnode_handle_put(args.fwnode);
+		return IOMEM_ERR_PTR(-EINVAL);
+	}
+
+	adev = to_acpi_device_node(args.fwnode);
+
+	ret = acpi_dev_get_resources(adev, &res_list, NULL, NULL);
+	if (ret <= 0) {
+		fwnode_handle_put(args.fwnode);
+		return IOMEM_ERR_PTR(ret ? ret : -EINVAL);
+	}
+
+	addr = IOMEM_ERR_PTR(-ENODEV);
+	list_for_each_entry(rentry, &res_list, node) {
+		if (resource_type(rentry->res) != IORESOURCE_MEM)
+			continue;
+
+		*res = *rentry->res;
+		size = resource_size(res);
+		if (cinfo->max_msg_size + SCMI_SHMEM_LAYOUT_OVERHEAD > size) {
+			dev_err(dev, "misconfigured SCMI shared memory\n");
+			addr = IOMEM_ERR_PTR(-ENOSPC);
+			break;
+		}
+
+		addr = devm_ioremap(dev, res->start, size);
+		if (!addr) {
+			dev_err(dev,
+				"failed to ioremap SCMI %s shared memory\n",
+				desc);
+			addr = IOMEM_ERR_PTR(-EADDRNOTAVAIL);
+		}
+		break;
+	}
+
+	acpi_dev_free_resource_list(&res_list);
+
+	if (!IS_ERR(addr)) {
+		u32 reg_io_width = 4;
+
+		fwnode_property_read_u32(args.fwnode,
+					"reg-io-width", &reg_io_width);
+		switch (reg_io_width) {
+		case 4:
+			*ops = &shmem_io_ops32;
+			break;
+		default:
+			*ops = &shmem_io_ops_default;
+			break;
+		}
+	}
+
+	fwnode_handle_put(args.fwnode);
+
+	return addr;
+}
+#endif
+
 static void __iomem *shmem_setup_iomap(struct scmi_chan_info *cinfo,
 				       struct device *dev, bool tx,
 				       struct resource *res,
@@ -204,9 +293,16 @@ static void __iomem *shmem_setup_iomap(struct scmi_chan_info *cinfo,
 	void __iomem *addr;
 	u32 reg_io_width;
 
+	if (!cdev->of_node) {
+#ifdef CONFIG_ACPI
+		return shmem_acpi_setup_iomap(cinfo, dev, tx, res, ops);
+#else
+		return IOMEM_ERR_PTR(-ENODEV);
+#endif
+	}
+
 	struct device_node *shmem __free(device_node) = of_parse_phandle(cdev->of_node,
 		"shmem", idx);
-
 	if (!shmem)
 		return IOMEM_ERR_PTR(-ENODEV);
 
