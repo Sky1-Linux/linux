@@ -275,6 +275,8 @@ config DRM_LIB_RANDOM
 
 source "drivers/gpu/drm/cix/Kconfig"
 
+source "drivers/gpu/drm/sky1/Kconfig"
+
 # DRM driver Kconfig files, sorted
 source "drivers/gpu/drm/adp/Kconfig"
 source "drivers/gpu/drm/amd/amdgpu/Kconfig"
