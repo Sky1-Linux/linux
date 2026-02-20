@@ -1,0 +1,14 @@
+config DRM_SKY1
+	tristate "Sky1 GPU render node bridge"
+	depends on DRM && MMU
+	select DRM_GEM_SHMEM_HELPER
+	help
+	  Provides a DRM render node for the CIX Sky1 SoC.  The Mali GPU
+	  on Sky1 uses a non-standard device interface (/dev/mali0) that
+	  the Linux graphics stack cannot discover.  This module bridges
+	  the gap with a standard DRM render node providing GEM buffer
+	  allocation and DMA-BUF export/import (PRIME).
+
+	  Required for hardware-accelerated OpenGL via Mesa Zink on Sky1.
+
+	  If M is selected the module will be called sky1-drm.
