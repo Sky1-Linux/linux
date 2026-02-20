@@ -8,12 +8,16 @@
  * GBM and Mesa Zink to discover and use the GPU via the normal Linux graphics
  * stack.
  *
+ * Uses a platform device so the render node appears on DRM_BUS_PLATFORM,
+ * allowing Mesa's kmsro pipe_loader to discover it as a compatible render
+ * device for the linlondp DPU.
+ *
  * Modeled on drivers/gpu/drm/vgem/vgem_drv.c, minus fence ioctls.
  */
 
 #include <linux/dma-buf.h>
 #include <linux/module.h>
-#include <linux/device/faux.h>
+#include <linux/platform_device.h>
 
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
@@ -28,7 +32,7 @@
 
 static struct sky1_drm_device {
 	struct drm_device drm;
-	struct faux_device *faux_dev;
+	struct platform_device *pdev;
 } *sky1_device;
 
 static struct drm_gem_object *sky1_gem_create_object(struct drm_device *dev,
@@ -65,26 +69,26 @@ static const struct drm_driver sky1_drm_driver = {
 static int __init sky1_drm_init(void)
 {
 	int ret;
-	struct faux_device *fdev;
+	struct platform_device *pdev;
 
-	fdev = faux_device_create(DRIVER_NAME, NULL, NULL);
-	if (!fdev)
-		return -ENODEV;
+	pdev = platform_device_register_simple(DRIVER_NAME, -1, NULL, 0);
+	if (IS_ERR(pdev))
+		return PTR_ERR(pdev);
 
-	if (!devres_open_group(&fdev->dev, NULL, GFP_KERNEL)) {
+	if (!devres_open_group(&pdev->dev, NULL, GFP_KERNEL)) {
 		ret = -ENOMEM;
 		goto out_destroy;
 	}
 
-	dma_coerce_mask_and_coherent(&fdev->dev, DMA_BIT_MASK(64));
+	dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(64));
 
-	sky1_device = devm_drm_dev_alloc(&fdev->dev, &sky1_drm_driver,
+	sky1_device = devm_drm_dev_alloc(&pdev->dev, &sky1_drm_driver,
 					 struct sky1_drm_device, drm);
 	if (IS_ERR(sky1_device)) {
 		ret = PTR_ERR(sky1_device);
 		goto out_devres;
 	}
-	sky1_device->faux_dev = fdev;
+	sky1_device->pdev = pdev;
 
 	ret = drm_dev_register(&sky1_device->drm, 0);
 	if (ret)
@@ -93,19 +97,19 @@ static int __init sky1_drm_init(void)
 	return 0;
 
 out_devres:
-	devres_release_group(&fdev->dev, NULL);
+	devres_release_group(&pdev->dev, NULL);
 out_destroy:
-	faux_device_destroy(fdev);
+	platform_device_unregister(pdev);
 	return ret;
 }
 
 static void __exit sky1_drm_exit(void)
 {
-	struct faux_device *fdev = sky1_device->faux_dev;
+	struct platform_device *pdev = sky1_device->pdev;
 
 	drm_dev_unregister(&sky1_device->drm);
-	devres_release_group(&fdev->dev, NULL);
-	faux_device_destroy(fdev);
+	devres_release_group(&pdev->dev, NULL);
+	platform_device_unregister(pdev);
 }
 
 module_init(sky1_drm_init);
