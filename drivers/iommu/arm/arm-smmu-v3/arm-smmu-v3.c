@@ -4734,6 +4734,74 @@ static void arm_smmu_dt_install_bypass_ste(struct arm_smmu_device *smmu)
 	}
 }
 
+/*
+ * CIX Sky1 SoC PCIe SMMU — pre-install bypass STEs for PCIe root port
+ * and device SIDs under ACPI boot.
+ *
+ * Under device tree boot, the "arm,boot-active-sids" property on the SMMU
+ * node provides these SIDs.  Under ACPI, the IORT has no equivalent
+ * mechanism, so we detect the Sky1 PCIe SMMU by its physical base address
+ * and install bypass STEs for the known SIDs.
+ *
+ * Without these bypass STEs, PCIe devices that are already bus-mastering
+ * (NVMe, network) when the SMMU driver resets will hit abort STEs,
+ * generating C_BAD_STREAMID events and potential DMA errors.  The CIX Sky1
+ * UEFI firmware also has broken IORT stream table mappings that cause a
+ * sustained ~130 IRQ/sec event storm on CPU0 with the vendor kernel; the
+ * mainline driver reinitializes the stream table correctly but still needs
+ * bypass STEs for the window between SMMU enable and driver attachment.
+ */
+#define CIX_SKY1_PCIE_SMMU_BASE	0x0b010000ULL
+
+static const u32 cix_sky1_pcie_boot_sids[] = {
+	0x0000, 0x0100,		/* PCIe X1_0 */
+	0x3000, 0x3100,		/* PCIe X1_1 */
+	0x6000, 0x6100,		/* PCIe X2 */
+	0x9000, 0x9100,		/* PCIe X4 */
+	0xc000, 0xc100,		/* PCIe X8 */
+};
+
+static void arm_smmu_acpi_install_bypass_ste(struct arm_smmu_device *smmu)
+{
+	struct platform_device *pdev = to_platform_device(smmu->dev);
+	struct resource *res;
+	unsigned int i, count = 0;
+
+	/* Only applies under ACPI boot (DT handled by boot-active-sids) */
+	if (smmu->dev->of_node)
+		return;
+
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!res || res->start != CIX_SKY1_PCIE_SMMU_BASE)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(cix_sky1_pcie_boot_sids); i++) {
+		u32 sid = cix_sky1_pcie_boot_sids[i];
+
+		if (arm_smmu_init_sid_strtab(smmu, sid)) {
+			dev_err(smmu->dev,
+				"Sky1 PCIe boot SID(0x%x) bypass failed\n",
+				sid);
+			continue;
+		}
+
+		arm_smmu_make_bypass_ste(smmu,
+			arm_smmu_get_step_for_sid(smmu, sid));
+		count++;
+	}
+
+	/*
+	 * Sky1 PCIe controller's DTI ATS Master sends translated TLP
+	 * messages even when endpoint devices don't support ATS.
+	 * Under DT this comes from the "cix,pcie-ats-override" property.
+	 */
+	smmu->options |= ARM_SMMU_OPT_PCIE_ATS_OVERRIDE;
+
+	dev_info(smmu->dev,
+		 "CIX Sky1 PCIe SMMU: %u bypass STEs installed, ATS override enabled\n",
+		 count);
+}
+
 static void arm_smmu_rmr_install_bypass_ste(struct arm_smmu_device *smmu)
 {
 	struct list_head rmr_list;
@@ -4902,6 +4970,9 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
 
 	/* Install bypass STEs for boot-active devices from DT */
 	arm_smmu_dt_install_bypass_ste(smmu);
+
+	/* Install bypass STEs for CIX Sky1 PCIe under ACPI boot */
+	arm_smmu_acpi_install_bypass_ste(smmu);
 
 	/* Reset the device */
 	ret = arm_smmu_device_reset(smmu);
