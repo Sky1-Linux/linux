@@ -934,6 +934,7 @@ enum pagetype {
 	PGTY_zsmalloc		= 0xf6,
 	PGTY_unaccepted		= 0xf7,
 	PGTY_large_kmalloc	= 0xf8,
+	PGTY_mali_gpu		= 0xf9,
 
 	PGTY_mapcount_underflow = 0xff
 };
@@ -1077,6 +1078,7 @@ PAGE_TYPE_OPS(Zsmalloc, zsmalloc, zsmalloc)
  */
 PAGE_TYPE_OPS(Unaccepted, unaccepted, unaccepted)
 FOLIO_TYPE_OPS(large_kmalloc, large_kmalloc)
+PAGE_TYPE_OPS(MaliGpu, mali_gpu, mali_gpu)
 
 /**
  * PageHuge - Determine if the page belongs to hugetlbfs
@@ -1159,7 +1161,7 @@ PAGEFLAG_FALSE(MovableOpsIsolated, movable_ops_isolated);
 static inline bool page_has_movable_ops(const struct page *page)
 {
 	return PageMovableOps(page) &&
-	       (PageOffline(page) || PageZsmalloc(page));
+	       (PageOffline(page) || PageZsmalloc(page) || PageMaliGpu(page));
 }
 
 static __always_inline int PageAnonExclusive(const struct page *page)

@@ -53,6 +53,7 @@
 
 static const struct movable_operations *offline_movable_ops;
 static const struct movable_operations *zsmalloc_movable_ops;
+static const struct movable_operations *mali_gpu_movable_ops;
 
 int set_movable_ops(const struct movable_operations *ops, enum pagetype type)
 {
@@ -70,6 +71,11 @@ int set_movable_ops(const struct movable_operations *ops, enum pagetype type)
 		if (zsmalloc_movable_ops && ops)
 			return -EBUSY;
 		zsmalloc_movable_ops = ops;
+		break;
+	case PGTY_mali_gpu:
+		if (mali_gpu_movable_ops && ops)
+			return -EBUSY;
+		mali_gpu_movable_ops = ops;
 		break;
 	default:
 		return -EINVAL;
@@ -92,6 +98,8 @@ static const struct movable_operations *page_movable_ops(struct page *page)
 		return offline_movable_ops;
 	if (PageZsmalloc(page))
 		return zsmalloc_movable_ops;
+	if (PageMaliGpu(page))
+		return mali_gpu_movable_ops;
 
 	return NULL;
 }
