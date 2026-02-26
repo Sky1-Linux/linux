@@ -5,16 +5,61 @@
  *
  */
 #include <linux/debugfs.h>
+#include <linux/moduleparam.h>
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_blend.h>
+#include <drm/drm_fourcc.h>
 #include <drm/drm_print.h>
 #include <drm/drm_file.h>
 #include "linlondp_dev.h"
 #include "linlondp_drm.h"
 #include "linlondp_kms.h"
 #include "linlondp_framebuffer.h"
+
+/*
+ * Diagnostic knob:
+ * Force scanout planes to advertise and accept LINEAR modifiers only.
+ * Use this to isolate AFBC decode/fetch issues in the display path.
+ */
+static bool force_linear_scanout_modifiers;
+module_param(force_linear_scanout_modifiers, bool, 0644);
+MODULE_PARM_DESC(force_linear_scanout_modifiers,
+		 "Force linear scanout modifiers only (default: off)");
+
+/*
+ * Diagnostic knob:
+ * Mask 10bpc RGB scanout formats from KMS plane capabilities so compositors
+ * prefer 8bpc formats (e.g. AR24/XR24). This is useful for isolating
+ * AB30/XB30 + AFBC specific issues.
+ */
+static bool force_scanout_8bpc_formats;
+module_param(force_scanout_8bpc_formats, bool, 0644);
+MODULE_PARM_DESC(force_scanout_8bpc_formats,
+		 "Mask 10bpc RGB scanout formats from plane capabilities (default: off)");
+
+static const u64 linlondp_linear_only_modifiers[] = {
+	DRM_FORMAT_MOD_LINEAR,
+	DRM_FORMAT_MOD_INVALID,
+};
+
+static bool linlondp_is_10bpc_rgb_format(u32 format)
+{
+	switch (format) {
+	case DRM_FORMAT_ARGB2101010:
+	case DRM_FORMAT_ABGR2101010:
+	case DRM_FORMAT_RGBA1010102:
+	case DRM_FORMAT_BGRA1010102:
+	case DRM_FORMAT_XRGB2101010:
+	case DRM_FORMAT_XBGR2101010:
+	case DRM_FORMAT_RGBX1010102:
+	case DRM_FORMAT_BGRX1010102:
+		return true;
+	default:
+		return false;
+	}
+}
 
 static int linlondp_plane_init_data_flow(struct drm_plane_state *st,
 					 struct linlondp_crtc_state *kcrtc_st,
@@ -320,6 +365,15 @@ static bool linlondp_plane_format_mod_supported(struct drm_plane *plane,
 	struct linlondp_plane *kplane = to_kplane(plane);
 	u32 layer_type = kplane->layer->layer_type;
 
+	if (force_scanout_8bpc_formats &&
+	    linlondp_is_10bpc_rgb_format(format))
+		return false;
+
+	if (force_linear_scanout_modifiers &&
+	    modifier != DRM_FORMAT_MOD_LINEAR &&
+	    modifier != DRM_FORMAT_MOD_INVALID)
+		return false;
+
 	return linlondp_format_mod_supported(&mdev->fmt_tbl, layer_type, format,
 					     modifier, 0);
 }
@@ -553,6 +607,7 @@ static int linlondp_plane_add(struct linlondp_kms_dev *kms,
 	struct linlondp_color_manager *color_mgr;
 	struct linlondp_plane *kplane;
 	struct drm_plane *plane;
+	const u64 *supported_modifiers;
 	u32 *formats, n_formats = 0;
 	int err;
 
@@ -567,10 +622,29 @@ static int linlondp_plane_add(struct linlondp_kms_dev *kms,
 	formats = linlondp_get_layer_fourcc_list(&mdev->fmt_tbl,
 						 layer->layer_type, &n_formats);
 
+	if (force_scanout_8bpc_formats) {
+		u32 i, j = 0;
+
+		for (i = 0; i < n_formats; i++) {
+			if (linlondp_is_10bpc_rgb_format(formats[i]))
+				continue;
+			formats[j++] = formats[i];
+		}
+		n_formats = j;
+	}
+
+	if (!n_formats) {
+		err = -EINVAL;
+		goto cleanup;
+	}
+
+	supported_modifiers = force_linear_scanout_modifiers ?
+		linlondp_linear_only_modifiers : linlondp_supported_modifiers;
+
 	err = drm_universal_plane_init(&kms->base, plane,
 				       get_possible_crtcs(kms, c->pipeline),
 				       &linlondp_plane_funcs, formats,
-				       n_formats, linlondp_supported_modifiers,
+				       n_formats, supported_modifiers,
 				       get_plane_type(kms, c), "%s", c->name);
 
 	linlondp_put_fourcc_list(formats);
