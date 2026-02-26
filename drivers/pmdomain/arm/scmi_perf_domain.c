@@ -13,6 +13,7 @@
 #include <linux/pm_opp.h>
 #include <linux/property.h>
 #include <linux/scmi_protocol.h>
+#include <linux/scmi_perf_domain.h>
 #include <linux/slab.h>
 
 struct scmi_perf_domain {
@@ -266,6 +267,57 @@ static struct scmi_driver scmi_perf_domain_driver = {
 	.remove		= scmi_perf_domain_remove,
 	.id_table	= scmi_id_table,
 };
+/**
+ * scmi_perf_domain_est_power() - Get estimated power for a rate via SCMI
+ * @dev:   Device attached to an SCMI perf domain genpd
+ * @rate:  [in/out] Frequency in Hz (may be adjusted by firmware)
+ * @power: [out] Estimated power in firmware-native units
+ *
+ * Returns 0 on success, or negative error.
+ */
+int scmi_perf_domain_est_power(struct device *dev,
+			       unsigned long *rate, unsigned long *power)
+{
+	struct generic_pm_domain *genpd;
+	struct scmi_perf_domain *pd;
+
+	if (!dev || !dev->pm_domain)
+		return -ENODEV;
+
+	genpd = pd_to_genpd(dev->pm_domain);
+	if (IS_ERR(genpd) ||
+	    genpd->set_performance_state != scmi_pd_set_perf_state)
+		return -ENODEV;
+
+	pd = to_scmi_pd(genpd);
+	return pd->perf_ops->est_power_get(pd->ph, pd->domain_id, rate, power);
+}
+EXPORT_SYMBOL_GPL(scmi_perf_domain_est_power);
+
+/**
+ * scmi_perf_domain_power_scale() - Get power scale used by SCMI firmware
+ * @dev: Device attached to an SCMI perf domain genpd
+ *
+ * Returns the power scale enum, or SCMI_POWER_BOGOWATTS on error.
+ */
+enum scmi_power_scale scmi_perf_domain_power_scale(struct device *dev)
+{
+	struct generic_pm_domain *genpd;
+	struct scmi_perf_domain *pd;
+
+	if (!dev || !dev->pm_domain)
+		return SCMI_POWER_BOGOWATTS;
+
+	genpd = pd_to_genpd(dev->pm_domain);
+	if (IS_ERR(genpd) ||
+	    genpd->set_performance_state != scmi_pd_set_perf_state)
+		return SCMI_POWER_BOGOWATTS;
+
+	pd = to_scmi_pd(genpd);
+	return pd->perf_ops->power_scale_get(pd->ph);
+}
+EXPORT_SYMBOL_GPL(scmi_perf_domain_power_scale);
+
 module_scmi_driver(scmi_perf_domain_driver);
 
 MODULE_AUTHOR("Ulf Hansson <ulf.hansson@linaro.org>");
