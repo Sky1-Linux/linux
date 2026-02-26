@@ -1600,8 +1600,15 @@ static int cix_udphy_probe(struct platform_device *pdev)
 		dev_err(dev, "failed to register phy provider\n");
 		goto put_child;
 	}
-	if (!device_property_present(dev, "mode-switch"))
+	if (!device_property_present(dev, "mode-switch")) {
+		if (udphy->next_mode == UDPHY_MODE_NONE) {
+			if (udphy->dp_phy)
+				udphy->next_mode = UDPHY_MODE_DP;
+			else
+				udphy->next_mode = UDPHY_MODE_USB;
+		}
 		usbdp_set_dpphy_mode(udphy);
+	}
 
 	return 0;
 
