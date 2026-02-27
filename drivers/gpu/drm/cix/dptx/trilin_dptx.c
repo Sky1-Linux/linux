@@ -2619,6 +2619,7 @@ int trilin_dp_handle_disconnect(struct trilin_dp *dp, bool send_notification)
 	 */
 	trilin_dp_core_off(dp);
 	dp->state &= ~DP_STATE_ENABLED;
+	dp->active_stream_cnt = 0;
 
 	if (dp->mst.mst_active) {
 		/* user mode should active power off to disable encoder */
