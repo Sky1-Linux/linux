@@ -4,6 +4,7 @@ config CIX_SKY1_SOCINFO
 	tristate "CIX Sky1 SoC information driver"
 	depends on ARCH_CIX || COMPILE_TEST
 	depends on NVMEM
+	select SOC_BUS
 	default ARCH_CIX
 	help
 	  Say yes here to enable support for the CIX Sky1 SoC information

@@ -8,6 +8,7 @@ config DRM_TRILIN_DPSUB
 	select DRM_DISPLAY_HDMI_HELPER
 	select DRM_DP_AUX_CHARDEV
 	select GENERIC_PHY
+	select BACKLIGHT_CLASS_DEVICE
 	select SND_SOC_HDMI_CODEC if SND_SOC
 	help
 	  This is a DRM/KMS driver for Trilinear Technologies DisplayPort controller.
