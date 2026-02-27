@@ -26,6 +26,7 @@
 #include <drm/drm_of.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_simple_kms_helper.h>
+#include <drm/display/drm_dp_helper.h>
 
 #include <linux/clk.h>
 #include <linux/debugfs.h>
@@ -343,6 +344,7 @@ static int trilin_dp_connector_get_modes(struct drm_connector *connector)
 			return ret;
 		}
 
+		drm_dp_cec_set_edid(&dp->aux, edid);
 		ret = trilin_connector_update_modes(connector, edid);
 		kfree(edid);
 
@@ -1244,6 +1246,10 @@ int trilin_dp_drm_init(struct trilin_dpsub *dpsub)
 	drm_atomic_helper_connector_reset(connector);
 	trilin_dp_add_properties(dp, connector);
 	//dp hardware init now
-	trilin_dp_init_config(dp);
+	ret = trilin_dp_init_config(dp);
+	if (ret)
+		return ret;
+
+	drm_dp_cec_register_connector(&dp->aux, connector);
 	return 0;
 }
