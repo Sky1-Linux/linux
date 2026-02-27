@@ -32,6 +32,7 @@
 #include <drm/drm_simple_kms_helper.h>
 #include <drm/drm_debugfs.h>
 #include <drm/drm_file.h>
+#include <drm/display/drm_dp_helper.h>
 
 #include <linux/acpi.h>
 #include <linux/clk.h>
@@ -2621,6 +2622,9 @@ int trilin_dp_handle_disconnect(struct trilin_dp *dp, bool send_notification)
 	dp->state &= ~DP_STATE_ENABLED;
 	dp->active_stream_cnt = 0;
 
+	/* Invalidate CEC physical address; the framework debounces unregistration */
+	drm_dp_cec_unset_edid(&dp->aux);
+
 	if (dp->mst.mst_active) {
 		/* user mode should active power off to disable encoder */
 		trilin_dp_set_mst_mgr_state(dp, false);
@@ -2642,6 +2646,8 @@ int trilin_dp_deinit_config(struct trilin_dp *dp)
 	cancel_delayed_work_sync(&dp->hpd_irq_work);
 	cancel_delayed_work_sync(&dp->hpd_event_work);
 	disable_irq(dp->irq);
+
+	drm_dp_cec_unregister_connector(&dp->aux);
 
 	mutex_lock(&dp->session_lock);
 	trilin_dp_aux_cleanup(dp);
@@ -2717,6 +2723,8 @@ static void trilin_dp_hpd_irq_work_func(struct work_struct *work)
 		DP_DEBUG("hpd_high off, should update mst state\n");
 		return;
 	}
+
+	drm_dp_cec_irq(&dp->aux);
 
 	mutex_lock(&dp->session_lock);
 	if (!(dp->state & DP_STATE_INITIALIZED)) {
