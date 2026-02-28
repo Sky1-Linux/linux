@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /* Copyright 2024 Cix Technology Group Co., Ltd. */
 #include <linux/kernel.h>
+#include <linux/hdmi.h>
 #include "trilin_dptx_reg.h"
 #include "trilin_dptx.h"
+#include "dptx_infoframe.h"
 
 /* dp audio */
 void dptx_audio_handle_plugged_change(struct dptx_audio *dp_audio, bool plugged)
@@ -79,6 +81,40 @@ static void dptx_audio_setup(struct trilin_dp *dp, int source, int freq,
 	trilin_dp_write(dp, TRILIN_DPTX_SEC0_INPUT_SELECT + offset, source);
 }
 
+/*
+ * Send an Audio InfoFrame SDP so the sink knows the channel layout.
+ * Without this, the sink defaults to stereo regardless of how many
+ * channels are being transmitted.
+ */
+static void dptx_audio_send_infoframe(struct trilin_dp *dp, int source,
+				       const struct hdmi_audio_infoframe *cea)
+{
+	struct dp_sdp sdp;
+	ssize_t len;
+
+	len = hdmi_audio_infoframe_pack_for_dp(cea, &sdp, dp->dpcd[DP_DPCD_REV]);
+	if (len < 0) {
+		dev_warn(dp->dev, "failed to pack audio infoframe: %zd\n", len);
+		return;
+	}
+
+	cix_infoframe_write_packet(dp, source, CIX_AUDIO_INFO_SDP, &sdp, 1);
+}
+
+static int dptx_audio_get_eld(struct device *dev, void *data,
+			      uint8_t *buf, size_t len)
+{
+	struct trilin_dp *dp = data;
+
+	if (dp->plugin)
+		memcpy(buf, dp->connector.base.eld,
+		       min(sizeof(dp->connector.base.eld), len));
+	else
+		memset(buf, 0, len);
+
+	return 0;
+}
+
 static int dptx_audio_startup(struct device *dev, void *data)
 {
 	struct trilin_dp *dp = (struct trilin_dp *)data;
@@ -118,16 +154,19 @@ static int dptx_audio_hw_params(struct device *dev, void *data,
 	dp_audio->params.sample_width = params->sample_width;
 	dp_audio->params.sample_rate = params->sample_rate;
 	dp_audio->params.channels = params->channels;
+	dp_audio->params.cea = params->cea;
 
 	dev_dbg(dev,
-		"%s, daifmt fmt:%d, bit_clk_inv:%d, frame_clk_inv:%d, bit_clk_master:%d, frame_clk_master:%d, params sample_rate:%d, sample_width:%d, channels:%d\n",
+		"%s, daifmt fmt:%d, bit_clk_inv:%d, frame_clk_inv:%d, bit_clk_master:%d, frame_clk_master:%d, params sample_rate:%d, sample_width:%d, channels:%d, ca:%d\n",
 		__func__, daifmt->fmt, daifmt->bit_clk_inv,
 		daifmt->frame_clk_inv, daifmt->bit_clk_provider,
 		daifmt->frame_clk_provider, params->sample_rate,
-		params->sample_width, params->channels);
+		params->sample_width, params->channels,
+		params->cea.channel_allocation);
 
 	dptx_audio_setup(dp, 0, params->sample_rate, params->sample_width,
 			 params->channels);
+	dptx_audio_send_infoframe(dp, 0, &params->cea);
 
 	return 0;
 }
@@ -164,6 +203,7 @@ void dptx_audio_reconfig_and_enable(void *data)
 	dptx_audio_setup(dp, 0, dp_audio->params.sample_rate,
 			 dp_audio->params.sample_width,
 			 dp_audio->params.channels);
+	dptx_audio_send_infoframe(dp, 0, &dp_audio->params.cea);
 
 	/* enable dptx audio */
 	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 1);
@@ -173,6 +213,7 @@ const struct hdmi_codec_ops dptx_audio_codec_ops = {
 	.hw_params = dptx_audio_hw_params,
 	.audio_startup = dptx_audio_startup,
 	.audio_shutdown = dptx_audio_shutdown,
+	.get_eld = dptx_audio_get_eld,
 	.get_dai_id = dptx_audio_get_dai_id,
 	.hook_plugged_cb = dptx_audio_hook_plugged_cb
 };
