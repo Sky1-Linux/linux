@@ -159,12 +159,6 @@ union phy_configure_opts;
 #define TRILIN_DPTX_INTERRUPT_MASK_ALL 0x3f
 #define TRILIN_DPTX_INTERRUPT_CFG 0x1c
 
-/* PLATFORM define */
-#define CIX_PLATFORM_SOC 0
-#define CIX_PLATFORM_EMU 1
-#define CIX_PLATFORM_FPGA 2
-#define CIX_PLATFORM_INVALID -1
-
 #define TRILIN_DPTX_MAX_LANES 4
 #define TRILIN_DPTX_AUX_DIVIDER 200
 
@@ -468,7 +462,6 @@ struct trilin_dp {
 
 	struct trilin_phy_t phy;
 	enum trilin_dptx_state state;
-	int platform_id;
 
 	struct drm_display_mode *adjusted_mode;
 	struct dptx_audio dp_audio;

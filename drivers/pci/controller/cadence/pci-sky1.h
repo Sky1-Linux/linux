@@ -40,8 +40,6 @@ enum sky1_pcie_mode {
 };
 
 enum sky1_pcie_plat {
-	PCIE_PLAT_FPGA,
-	PCIE_PLAT_EMU,
 	PCIE_PLAT_EVK,
 	PCIE_PLAT_NIO,
 };
@@ -127,8 +125,6 @@ struct sky1_pcie {
 	struct gpio_desc *wake;
 	struct regulator *vsupply;
 	struct regulator *epsupply;
-
-	u32 plat;
 
 #ifdef CONFIG_DEBUG_FS
 	struct dentry *debugfs;
