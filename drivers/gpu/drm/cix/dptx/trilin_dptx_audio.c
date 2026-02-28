@@ -2,6 +2,7 @@
 /* Copyright 2024 Cix Technology Group Co., Ltd. */
 #include <linux/kernel.h>
 #include <linux/hdmi.h>
+#include <drm/drm_eld.h>
 #include "trilin_dptx_reg.h"
 #include "trilin_dptx.h"
 #include "dptx_infoframe.h"
@@ -122,11 +123,17 @@ static int dptx_audio_get_eld(struct device *dev, void *data,
 {
 	struct trilin_dp *dp = data;
 
-	if (dp->plugin)
-		memcpy(buf, dp->connector.base.eld,
-		       min(sizeof(dp->connector.base.eld), len));
-	else
-		memset(buf, 0, len);
+	/* Only copy the ELD if the sink is connected AND the ELD has
+	 * been populated from EDID (baseline_eld_len > 0).  At boot
+	 * the plugged callback fires before EDID is read, so the
+	 * connector ELD is still all-zeros — returning that causes
+	 * noisy "Unknown ELD version 0" warnings from snd_parse_eld.
+	 */
+	if (!dp->plugin || !dp->connector.base.eld[DRM_ELD_BASELINE_ELD_LEN])
+		return -ENODEV;
+
+	memcpy(buf, dp->connector.base.eld,
+	       min(sizeof(dp->connector.base.eld), len));
 
 	return 0;
 }
@@ -207,9 +214,14 @@ static int dptx_audio_hook_plugged_cb(struct device *dev, void *data,
 	dp_audio->plugged_cb = fn;
 	dp_audio->codec_dev = codec_dev;
 
-	/* dp plugin event report before this callback install when boot, have a check here */
-	dev_dbg(dp->dev, "dp audio plugin status = %d\n", dp->plugin);
-	dptx_audio_handle_plugged_change(dp_audio, dp->plugin);
+	/* Only fire the initial plugged notification if the ELD has
+	 * already been populated (i.e. EDID was read before hdmi-codec
+	 * registered).  Otherwise, trilin_connector_update_modes()
+	 * will fire it after the ELD is ready.  This avoids the
+	 * "Unknown ELD version 0" warning from snd_parse_eld.
+	 */
+	if (dp->plugin && dp->connector.base.eld[DRM_ELD_BASELINE_ELD_LEN])
+		dptx_audio_handle_plugged_change(dp_audio, true);
 
 	return 0;
 }

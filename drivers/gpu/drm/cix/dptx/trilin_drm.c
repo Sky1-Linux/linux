@@ -232,6 +232,12 @@ int trilin_connector_update_modes(struct drm_connector *connector,
 	drm_connector_update_edid_property(connector, edid);
 	ret = drm_add_edid_modes(connector, edid);
 
+	/* Notify hdmi-codec now that the ELD is populated from EDID.
+	 * The HPD handler deliberately skips this notification so that
+	 * hdmi-codec never sees an empty ELD.
+	 */
+	dptx_audio_handle_plugged_change(&dp->dp_audio, dp->plugin);
+
 	return ret;
 }
 

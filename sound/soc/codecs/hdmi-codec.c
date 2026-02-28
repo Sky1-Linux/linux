@@ -468,18 +468,23 @@ static int hdmi_codec_startup(struct snd_pcm_substream *substream,
 	if (tx && hcp->hcd.ops->get_eld) {
 		ret = hcp->hcd.ops->get_eld(dai->dev->parent, hcp->hcd.data,
 					    hcp->eld, sizeof(hcp->eld));
-		if (ret)
+		if (ret == -ENODEV) {
+			/* No sink connected; allow open without ELD constraints */
+			ret = 0;
+		} else if (ret) {
 			goto err;
+		} else {
+			snd_parse_eld(dai->dev, &hcp->eld_parsed,
+				      hcp->eld, sizeof(hcp->eld));
 
-		snd_parse_eld(dai->dev, &hcp->eld_parsed,
-			      hcp->eld, sizeof(hcp->eld));
+			ret = snd_pcm_hw_constraint_eld(substream->runtime,
+							hcp->eld);
+			if (ret)
+				goto err;
 
-		ret = snd_pcm_hw_constraint_eld(substream->runtime, hcp->eld);
-		if (ret)
-			goto err;
-
-		/* Select chmap supported */
-		hdmi_codec_eld_chmap(hcp);
+			/* Select chmap supported */
+			hdmi_codec_eld_chmap(hcp);
+		}
 	}
 
 	hcp->busy = true;
