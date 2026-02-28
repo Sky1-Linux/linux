@@ -100,6 +100,7 @@ free_mdrv:
 	return err;
 }
 
+#if !IS_ENABLED(CONFIG_DRM_CIX_COMPONENT_BIND_BYPASSED)
 static const struct component_master_ops linlondp_master_ops = {
 	.bind = linlondp_bind,
 	.unbind = linlondp_unbind,
@@ -112,11 +113,7 @@ static int compare_of(struct device *dev, void *data)
 	if (has_acpi_companion(dev)) {
 		ret = dev->fwnode == data;
 	} else {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 		ret = component_compare_of(dev, data);
-#else
-		ret = dev->of_node == data;
-#endif
 	}
 
 	return ret;
@@ -156,14 +153,17 @@ static void linlondp_add_slave(struct device *master,
 		of_node_put(remote);
 	}
 }
+#endif
 
 static int linlondp_platform_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+#if !IS_ENABLED(CONFIG_DRM_CIX_COMPONENT_BIND_BYPASSED)
 	struct component_match *match = NULL;
 	struct fwnode_handle *acpi_child;
 	struct device_node *of_child;
 	const char *tmp_name = NULL;
+#endif
 
 	dev_dbg(dev, "probe enter\n");
 #if !IS_ENABLED(CONFIG_DRM_CIX_COMPONENT_BIND_BYPASSED)

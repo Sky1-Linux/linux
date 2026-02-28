@@ -66,7 +66,7 @@ static int cix_enable_ddrlp(struct cix_ddrlp_data *dd)
 	return 0;
 }
 
-int cix_set_ddrlp(int on)
+static int cix_set_ddrlp(int on)
 {
 	if (!gdd)
 		return -ENODEV;
@@ -76,7 +76,6 @@ int cix_set_ddrlp(int on)
 	else
 		return cix_disable_ddrlp(gdd);
 }
-EXPORT_SYMBOL(cix_set_ddrlp);
 
 static ssize_t on_show(struct device *dev,
 		       struct device_attribute *attr, char *buf)

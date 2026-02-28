@@ -81,7 +81,7 @@ static int sky1_set_mode_by_id(struct device *dev, int mode)
  *
  */
 
-int sky1_usb_clk_enable_all(struct device *dev)
+static int sky1_usb_clk_enable_all(struct device *dev)
 {
 	int i, ret;
 	struct cdnsp_sky1 *data = dev_get_drvdata(dev);
@@ -197,7 +197,7 @@ static void sky1_usb_clk_disable_suspend(struct device *dev)
 #define PS_D3			3
 #define PS_PME_En		(1 << 8)
 
-int sky1_handshake(void __iomem *ptr, u32 mask, u32 done, u64 timeout_us)
+static int sky1_handshake(void __iomem *ptr, u32 mask, u32 done, u64 timeout_us)
 {
 	u32	result;
 	int	ret;
