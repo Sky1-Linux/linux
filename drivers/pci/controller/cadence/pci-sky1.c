@@ -1082,17 +1082,17 @@ static int sky1_pcie_set_phy_pnn_rst_n(struct sky1_pcie *pcie, int en)
 	case PCIE_ID_x2:
 		addr = pcie->rcsu_base + APP_OFFSET_STRAP_REG + STRAP_REG(42);
 		sky1_pcie_update_bits32(addr, 0xf, 0xf);
-		en_msk = (pcie->plat != PCIE_PLAT_EMU) ? 0x4 : 0x1;
+		en_msk = 0x4;
 		break;
 	case PCIE_ID_x1_0:
 		addr = pcie->rcsu_base + APP_OFFSET_STRAP_REG + STRAP_REG(42);
 		sky1_pcie_update_bits32(addr, 0xf, 0xf);
-		en_msk = (pcie->plat != PCIE_PLAT_EMU) ? 0x1 : 0x2;
+		en_msk = 0x1;
 		break;
 	case PCIE_ID_x1_1:
 		addr = pcie->rcsu_base + APP_OFFSET_STRAP_REG + STRAP_REG(42);
 		sky1_pcie_update_bits32(addr, 0xf, 0xf);
-		en_msk = (pcie->plat != PCIE_PLAT_EMU) ? 0x2 : 0x4;
+		en_msk = 0x2;
 		break;
 	default:
 		ret = -EINVAL;
@@ -1389,20 +1389,6 @@ static int sky1_pcie_parse_clocks(struct sky1_pcie *pcie)
 	return 0;
 }
 
-static int sky1_pcie_parse_plat(struct sky1_pcie *pcie)
-{
-	int ret = 0;
-
-	if (device_property_read_bool(pcie->dev, "plat-emu"))
-		pcie->plat = PCIE_PLAT_EMU;
-	else if (device_property_read_bool(pcie->dev, "plat-fpga"))
-		pcie->plat = PCIE_PLAT_FPGA;
-	else
-		pcie->plat = PCIE_PLAT_EVK;
-
-	return ret;
-}
-
 static void sky1_pcie_parse_ep_pwr_supply(struct sky1_pcie *pcie)
 {
 	struct device *dev = pcie->dev;
@@ -1451,9 +1437,6 @@ static int sky1_pcie_parse_reset_gpio(struct sky1_pcie *pcie)
 	struct gpio_desc *gpiodesc;
 	int ret = 0;
 
-	if (pcie->plat == PCIE_PLAT_EMU)
-		return ret;
-
 	if (ACPI_COMPANION(dev))
 		acpi_dev_add_driver_gpios(ACPI_COMPANION(dev),
 					  sky1_gpio_mappings);
@@ -1473,9 +1456,6 @@ static int sky1_pcie_parse_wake_gpio(struct sky1_pcie *pcie)
 	struct device *dev = pcie->dev;
 	struct gpio_desc *gpiodesc;
 	int ret = 0;
-
-	if (pcie->plat == PCIE_PLAT_EMU)
-		return ret;
 
 	gpiodesc = devm_gpiod_get_optional(dev, "wake", GPIOD_IN);
 	if (IS_ERR(gpiodesc)) {
@@ -1676,9 +1656,6 @@ static int sky1_pcie_parse_property(struct platform_device *pdev,
 	int ret = 0;
 
 	sky1_pcie_parse_ep_pwr_supply(pcie);
-	ret = sky1_pcie_parse_plat(pcie);
-	if (ret < 0)
-		return ret;
 
 	ret = sky1_pcie_parse_ctrl_id(pcie);
 	if (ret < 0)
@@ -1772,8 +1749,7 @@ static int sky1_pcie_phy_rst(struct sky1_pcie *pcie, int en)
 	if (ret)
 		return ret;
 
-	if ((pcie->plat != PCIE_PLAT_EMU) || (en != 0))
-		ret = sky1_pcie_set_phy_rst_n(pcie, en);
+	ret = sky1_pcie_set_phy_rst_n(pcie, en);
 
 	dev_dbg(pcie->dev, "%s en:%d\n", __func__, en);
 	return ret;
@@ -2121,12 +2097,10 @@ static int sky1_pcie_reset(struct sky1_pcie *pcie)
 	if (ret < 0)
 		goto err_pcie_reset;
 
-	if ((pcie->plat != PCIE_PLAT_FPGA) && (pcie->plat != PCIE_PLAT_EMU)) {
-		ret = phy_power_on(pcie->pcie_phy);
-		if (ret < 0) {
-			phy_exit(pcie->pcie_phy);
-			goto err_pcie_reset;
-		}
+	ret = phy_power_on(pcie->pcie_phy);
+	if (ret < 0) {
+		phy_exit(pcie->pcie_phy);
+		goto err_pcie_reset;
 	}
 
 	ret = sky1_pcie_phy_rst(pcie, 0x1);
@@ -2719,9 +2693,6 @@ static int sky1_pcie_probe(struct platform_device *pdev)
 	pcie->cfg_base = rc->cfg_base;
 
 	bridge->sysdata = pcie->cfg;
-	//DEBUG
-	if ((pcie->desc->id != PCIE_ID_x4) && (pcie->plat == PCIE_PLAT_FPGA))
-		return 0;
 
 	ret = sky1_pcie_ctrl_set_axi_clk_en(pcie, true);
 	if (ret < 0)

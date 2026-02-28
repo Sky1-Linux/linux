@@ -764,24 +764,20 @@ static const struct cix_udphy_cfg sky1_udphy_cfg = {
 
 static int udphy_regmap_write(void *context, unsigned int reg, unsigned int val)
 {
-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
 	struct cix_udphy *udphy = context;
 	u32 offset = reg << 2;
 
 	writel(val, udphy->base + offset);
-#endif
 
 	return 0;
 }
 
 static int udphy_regmap_read(void *context, unsigned int reg, unsigned int *val)
 {
-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
 	struct cix_udphy *udphy = context;
 	u32 offset = reg << 2;
 
 	*val = readl(udphy->base + offset);
-#endif
 
 	return 0;
 }

@@ -24,7 +24,7 @@
  */
 
 /**
- * emum aipu_arch - AIPU architecture number
+ * enum aipu_arch - AIPU architecture number
  * @AIPU_ARCH_ZHOUYI: AIPU architecture is Zhouyi.
  *
  * This enum is used to indicate the architecture of an AIPU core in the system.
@@ -34,7 +34,7 @@ enum aipu_arch {
 };
 
 /**
- * emum aipu_isa_version - AIPU ISA version number
+ * enum aipu_isa_version - AIPU ISA version number
  * @AIPU_ISA_VERSION_ZHOUYI_V1:   AIPU ISA version is Zhouyi V1.
  * @AIPU_ISA_VERSION_ZHOUYI_V2_0: AIPU ISA version is Zhouyi V2 (Z2).
  * @AIPU_ISA_VERSION_ZHOUYI_V2_1: AIPU ISA version is Zhouyi V2 (Z3).
