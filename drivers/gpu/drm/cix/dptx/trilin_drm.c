@@ -320,46 +320,41 @@ static int trilin_dp_connector_get_modes(struct drm_connector *connector)
 
 	DP_DEBUG("enter\n");
 
-	if (dp->platform_id != CIX_PLATFORM_EMU) {
-		edid = drm_get_edid(connector, &dp->aux.ddc);
-		if (!edid) { /* try once again */
-			for (int count = 0; count < GET_EDID_RETRY_MAX;
-			     count++) {
-				msleep(20);
-				edid = drm_get_edid(connector, &dp->aux.ddc);
-				if (edid)
-					break;
-			}
+	edid = drm_get_edid(connector, &dp->aux.ddc);
+	if (!edid) { /* try once again */
+		for (int count = 0; count < GET_EDID_RETRY_MAX;
+		     count++) {
+			msleep(20);
+			edid = drm_get_edid(connector, &dp->aux.ddc);
+			if (edid)
+				break;
 		}
-
-		if (!edid) {
-			mode = drm_dp_downstream_mode(connector->dev, dp->dpcd,
-						      dp->downstream_ports);
-			if (mode) {
-				drm_mode_probed_add(connector, mode);
-				ret++;
-			}
-			if (ret == 0) {
-				/* fall back to be 1080p */
-				ret = drm_add_modes_noedid(connector, 1920,
-							   1080);
-				drm_set_preferred_mode(connector, 1920, 1080);
-				DP_INFO("edid is null and read downstream: count=%d",
-					ret);
-			}
-			return ret;
-		}
-
-		drm_dp_cec_set_edid(&dp->aux, edid);
-		ret = trilin_connector_update_modes(connector, edid);
-		kfree(edid);
-
-		if (connector->connector_type == DRM_MODE_CONNECTOR_eDP)
-			ret += trilin_dp_add_virtual_modes_noedid(connector);
-	} else {
-		ret = drm_add_modes_noedid(connector, 4096, 4096);
-		drm_set_preferred_mode(connector, 640, 480);
 	}
+
+	if (!edid) {
+		mode = drm_dp_downstream_mode(connector->dev, dp->dpcd,
+					      dp->downstream_ports);
+		if (mode) {
+			drm_mode_probed_add(connector, mode);
+			ret++;
+		}
+		if (ret == 0) {
+			/* fall back to be 1080p */
+			ret = drm_add_modes_noedid(connector, 1920,
+						   1080);
+			drm_set_preferred_mode(connector, 1920, 1080);
+			DP_INFO("edid is null and read downstream: count=%d",
+				ret);
+		}
+		return ret;
+	}
+
+	drm_dp_cec_set_edid(&dp->aux, edid);
+	ret = trilin_connector_update_modes(connector, edid);
+	kfree(edid);
+
+	if (connector->connector_type == DRM_MODE_CONNECTOR_eDP)
+		ret += trilin_dp_add_virtual_modes_noedid(connector);
 
 	DP_DEBUG("mode count = %d bpc=%d\n", ret, info->bpc);
 	return ret;

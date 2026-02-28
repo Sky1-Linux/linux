@@ -377,16 +377,12 @@ static int trilin_dp_link_set_pattern(struct trilin_dp *dp, int link_train_proce
 		pat = DP_TRAINING_PATTERN_1;
 		break;
 	case LINK_TRAIN_CHANNEL_EQUALIZATION:
-		if (dp->platform_id != CIX_PLATFORM_SOC) {
+		if (dp->caps.tps4_supported)
+			pat = DP_TRAINING_PATTERN_4;
+		else if (dp->caps.tps3_supported)
+			pat = DP_TRAINING_PATTERN_3;
+		else
 			pat = DP_TRAINING_PATTERN_2;
-		} else {
-			if (dp->caps.tps4_supported)
-				pat = DP_TRAINING_PATTERN_4;
-			else if (dp->caps.tps3_supported)
-				pat = DP_TRAINING_PATTERN_3;
-			else
-				pat = DP_TRAINING_PATTERN_2;
-		}
 		break;
 	default:
 		DP_ERR("no this train patten.");
@@ -511,15 +507,12 @@ static int trilin_dp_link_train_ce(struct trilin_dp *dp)
 		if (ce_done)
 			break;
 
-		if (dp->platform_id == CIX_PLATFORM_EMU) // skip CE
-			goto end;
-
 		trilin_dp_adjust_train(dp, link_status);
 	}
 
 	if (!ce_done)
 		return -EIO;
-end:
+
 	dp->train_ce_done = true;
 	return 0;
 }
@@ -641,11 +634,10 @@ static int trilin_dp_link_configure(struct trilin_dp *dp)
 
 	trilin_link_rate_update(dp, bw_code);
 
-	if (dp->platform_id == CIX_PLATFORM_SOC) {
-		ret = trilin_dp_phy_ready(dp);
-		if (ret < 0)
-			return ret;
-	}
+	ret = trilin_dp_phy_ready(dp);
+	if (ret < 0)
+		return ret;
+
 	return ret;
 }
 
@@ -809,26 +801,14 @@ static int trilin_dp_aux_cmd_submit(struct trilin_dp *dp, u32 cmd, u32 addr,
 	if (reply)
 		*reply = reg;
 
-	if (dp->platform_id != CIX_PLATFORM_EMU) {
-		if (is_read && (reg == TRILIN_DPTX_AUX_REPLY_CODE_AUX_ACK ||
-				reg == TRILIN_DPTX_AUX_REPLY_CODE_I2C_ACK)) {
-			reg = trilin_dp_read(dp,
-					     TRILIN_DPTX_AUX_REPLY_DATA_COUNT);
-			if ((reg & TRILIN_DPTX_REPLY_DATA_COUNT_MASK) !=
-			    bytes) {
-				DP_ERR("TRILIN_DPTX_REPLY_DATA_COUNT_MASK\n");
-				return -EIO;
-			}
-		}
-	} else {
-		if (is_read) {
-			reg = trilin_dp_read(dp,
-					     TRILIN_DPTX_AUX_REPLY_DATA_COUNT);
-			if ((reg & TRILIN_DPTX_REPLY_DATA_COUNT_MASK) !=
-			    bytes) {
-				DP_ERR("TRILIN_DPTX_AUX_REPLY_DATA_COUNT\n");
-				return -EIO;
-			}
+	if (is_read && (reg == TRILIN_DPTX_AUX_REPLY_CODE_AUX_ACK ||
+			reg == TRILIN_DPTX_AUX_REPLY_CODE_I2C_ACK)) {
+		reg = trilin_dp_read(dp,
+				     TRILIN_DPTX_AUX_REPLY_DATA_COUNT);
+		if ((reg & TRILIN_DPTX_REPLY_DATA_COUNT_MASK) !=
+		    bytes) {
+			DP_ERR("TRILIN_DPTX_REPLY_DATA_COUNT_MASK\n");
+			return -EIO;
 		}
 	}
 
@@ -1819,9 +1799,6 @@ static int trilin_dp_ctrl_enable_stream_clocks(struct trilin_dp *dp,
 	int rc = 0;
 	struct clk *vid_clk;
 
-	if (dp->platform_id != CIX_PLATFORM_SOC)
-		return rc;
-
 	if (dp_panel->stream_id == DP_STREAM_0) {
 		vid_clk = dp->dpsub->vid_clk0;
 	} else if (dp_panel->stream_id == DP_STREAM_1) {
@@ -2104,9 +2081,8 @@ static int trilin_dp_core_on(struct trilin_dp *dp, bool shallow)
 		DP_DEBUG("train failed but GO ON");
 	}
 
-	DP_DEBUG("Trilinear DPTX %x with %u lanes, platform id %d\n",
-		trilin_dp_read(dp, TRILIN_DPTX_CORE_REVISION), dp->num_lanes,
-		dp->platform_id);
+	DP_DEBUG("Trilinear DPTX %x with %u lanes\n",
+		trilin_dp_read(dp, TRILIN_DPTX_CORE_REVISION), dp->num_lanes);
 
 	if (dp->edp_panel)
 		drm_panel_enable(dp->edp_panel);
@@ -2343,7 +2319,7 @@ static void trilin_dp_register_phy(struct trilin_dp *dp)
 	struct fwnode_handle *fwnode;
 
 	/* register phy here that need power init*/
-	if (!phy->phy_ops && dp->platform_id == CIX_PLATFORM_SOC) {
+	if (!phy->phy_ops) {
 		if (has_acpi_companion(dp->dev)) {
 			fwnode = fwnode_find_reference(dp->dev->fwnode, "dp_phy", 0);
 			if (!IS_ERR(fwnode)) {
@@ -3405,10 +3381,6 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
 	dp->max_rate = DP_HIGH_BIT_RATE3;
 	dp->max_streams = 2;
 	dp->state = DP_STATE_DISCONNECTED;
-	dp->platform_id = CIX_PLATFORM_SOC;
-#ifdef CONFIG_ARCH_CIX_EMU_FPGA
-	dp->platform_id = CIX_PLATFORM_FPGA;
-#endif
 	dp->force_pixel_per_cycle = 0;
 	dp->pixel_per_cycle = 1;
 	dp->edp_panel = edp_panel;
@@ -3449,7 +3421,6 @@ int trilin_dp_probe(struct trilin_dpsub *dpsub, struct drm_device *drm)
 	if (dp->irq < 0)
 		return dp->irq;
 
-	device_property_read_u32(dev, "cix,platform-id", &dp->platform_id);
 	device_property_read_u32(dev, "cix,dp-lane-number", &dp->num_lanes);
 	device_property_read_u32(dev, "cix,dp-max-rate", &dp->max_rate);
 	device_property_read_u32(dev, "cix,aux-clock-divider",

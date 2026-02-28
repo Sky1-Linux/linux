@@ -320,24 +320,20 @@ struct cix_pcie_phy {
 
 static int pcie_phy_regmap_write(void *context, unsigned int reg, unsigned int val)
 {
-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
 	struct cix_pcie_phy *pcie_phy = context;
 	u32 offset = reg << 2;
 
 	writel(val, pcie_phy->base + offset);
-#endif
 
 	return 0;
 }
 
 static int pcie_phy_regmap_read(void *context, unsigned int reg, unsigned int *val)
 {
-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
 	struct cix_pcie_phy *pcie_phy = context;
 	u32 offset = reg << 2;
 
 	*val = readl(pcie_phy->base + offset);
-#endif
 
 	return 0;
 }

@@ -245,24 +245,20 @@ static const struct cix_u3phy_cfg sky1_u3phy_cfg = {
 };
 static int u3phy_regmap_write(void *context, unsigned int reg, unsigned int val)
 {
-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
 	struct cix_u3phy *u3phy = context;
 	u32 offset = reg << 2;
 
 	writel(val, u3phy->base + offset);
-#endif
 
 	return 0;
 }
 
 static int u3phy_regmap_read(void *context, unsigned int reg, unsigned int *val)
 {
-#if (!IS_ENABLED(CONFIG_ARCH_CIX_EMU_FPGA))
 	struct cix_u3phy *u3phy = context;
 	u32 offset = reg << 2;
 
 	*val = readl(u3phy->base + offset);
-#endif
 	return 0;
 }
 

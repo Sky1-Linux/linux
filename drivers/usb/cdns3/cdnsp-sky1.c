@@ -375,10 +375,6 @@ static int cdnsp_sky1_drd_init(struct cdnsp_sky1 *data)
 
 
 	v0 = readl((void *)data->xhci_base + XEC_USBSSP_CHICKEN_BITS_3);
-#ifdef CONFIG_ARCH_CIX_FPGA
-	v0 &= APB_TIMEOUT_MASK;
-	v0 |= APB_TIMEOUT_VALUE_50MS_FREQ_200M;
-#endif
 	v0 &= ~(CFG_APB_TIMEOUT_PSLVERR_EN | CFG_APB_PSLVERR_EN);
 	writel(v0, (void *)data->xhci_base + XEC_USBSSP_CHICKEN_BITS_3);
 	if (data->u3_disable) {
