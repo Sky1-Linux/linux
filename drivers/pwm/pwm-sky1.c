@@ -210,6 +210,7 @@ static int pwm_sky1_probe(struct platform_device *pdev)
 		return PTR_ERR(sky1->mmio_base);
 
 	chip->ops = &pwm_sky1_ops;
+	platform_set_drvdata(pdev, chip);
 
 	ret = pwm_sky1_clk_prepare_enable(sky1);
 	if (ret)
