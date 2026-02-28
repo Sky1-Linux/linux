@@ -58,6 +58,22 @@ static void dptx_audio_setup(struct trilin_dp *dp, int source, int freq,
 		cs_length_orig_freq |= DPTX_CS_SAMPLING_ORIG_FREQ_44100HZ;
 		cs_freq_clock_accuracy = DPTX_CS_SAMPLING_FREQ_44100Hz;
 		break;
+	case 88200:
+		cs_length_orig_freq |= DPTX_CS_SAMPLING_ORIG_FREQ_88200HZ;
+		cs_freq_clock_accuracy = DPTX_CS_SAMPLING_FREQ_88200Hz;
+		break;
+	case 96000:
+		cs_length_orig_freq |= DPTX_CS_SAMPLING_ORIG_FREQ_96000HZ;
+		cs_freq_clock_accuracy = DPTX_CS_SAMPLING_FREQ_96000Hz;
+		break;
+	case 176400:
+		cs_length_orig_freq |= DPTX_CS_SAMPLING_ORIG_FREQ_176400HZ;
+		cs_freq_clock_accuracy = DPTX_CS_SAMPLING_FREQ_176400Hz;
+		break;
+	case 192000:
+		cs_length_orig_freq |= DPTX_CS_SAMPLING_ORIG_FREQ_192000HZ;
+		cs_freq_clock_accuracy = DPTX_CS_SAMPLING_FREQ_192000Hz;
+		break;
 	case 48000:
 	default:
 		cs_length_orig_freq |= DPTX_CS_SAMPLING_ORIG_FREQ_48000HZ;
