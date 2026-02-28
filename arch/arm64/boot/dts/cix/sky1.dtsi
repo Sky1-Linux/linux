@@ -749,9 +749,6 @@
 		clock-frequency = <1000000000>;
 		interrupt-parent = <&gic>;
 		arm,no-tick-in-suspend;
-#ifdef CONFIG_ARCH_CIX_EMU_FPGA
-		always-on; /* only on EMU/FPGA */
-#endif
 	};
 
 	sky1_fixed_clocks: fixed-clocks {
@@ -2559,7 +2556,6 @@
 			single-redist;
 			ranges;
 			interrupt-controller;
-#ifndef CONFIG_ARCH_CIX_EMU_FPGA
 			#redistributor-regions = <12>;
 			reg = <0x0 0x0e010000 0 0x10000>,	/* GICD */
 			      <0x0 0x0e090000 0 0x40000>,	/* GICR */
@@ -2574,11 +2570,6 @@
 			      <0x0 0x0e2d0000 0 0x40000>,       /* GICR9 */
 			      <0x0 0x0e310000 0 0x40000>,       /* GICR10 */
 			      <0x0 0x0e350000 0 0x40000>;       /* GICR11 */
-#else
-			#redistributor-regions = <1>;
-			reg = <0x0 0x0e010000 0 0x10000>,       /* GICD */
-			      <0x0 0x0e090000 0 0x40000>;       /* GICR */
-#endif
 			interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_LOW 0>;
 			interrupt-parent = <&gic>;
 
