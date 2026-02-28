@@ -2139,6 +2139,12 @@ static int trilin_dp_core_off(struct trilin_dp *dp)
 		phy->phy_ops->exit(dp);
 	}
 
+	/* Stop audio packets before tearing down the link.  The ALSA
+	 * stream may still be open (running flag stays set so that
+	 * reconfig_and_enable restores audio on the next plug-in).
+	 */
+	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 0);
+
 	trilin_dp_write(dp, TRILIN_DPTX_MST_ENABLE, 0);
 	trilin_dp_write(dp, TRILIN_DPTX_SOURCE_ENABLE, 0);
 	trilin_dp_write(dp, TRILIN_DPTX_SOFT_RESET, 0);
