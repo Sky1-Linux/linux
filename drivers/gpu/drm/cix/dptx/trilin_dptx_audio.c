@@ -151,10 +151,13 @@ static void dptx_audio_shutdown(struct device *dev, void *data)
 	struct trilin_dp *dp = (struct trilin_dp *)data;
 	struct dptx_audio *dp_audio = &dp->dp_audio;
 
-	if (!dp->plugin)
-		return;
-
 	dp_audio->running = false;
+
+	/* Disable audio packets in hardware.  If the sink was already
+	 * unplugged, core_off has powered down the PHY but this write
+	 * is still safe (MMIO register block remains accessible).
+	 */
+	trilin_dp_write(dp, TRILIN_DPTX_SEC0_AUDIO_ENABLE, 0);
 }
 
 static int dptx_audio_hw_params(struct device *dev, void *data,
