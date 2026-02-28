@@ -5,6 +5,7 @@
 #include <linux/clk.h>
 #include <linux/module.h>
 #include <linux/mfd/syscon.h>
+#include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include "card-utils.h"
 #include <sound/jack.h>
@@ -667,7 +668,7 @@ int cix_card_parse_acpi(struct cix_asoc_card *priv)
 	struct snd_soc_dai_link *links;
 	struct snd_soc_dai_link_component *comps;
 	struct dai_link_info *link_info;
-	int i;
+	int i, num_links = 0;
 
 	card->name = "cix_sky1";
 
@@ -687,13 +688,28 @@ int cix_card_parse_acpi(struct cix_asoc_card *priv)
 		return -ENOMEM;
 
 	for (i = 0; i < SKY1_HDMI_LINKS; i++) {
-		struct snd_soc_dai_link_component *cpu = &comps[i * 3];
-		struct snd_soc_dai_link_component *codec = &comps[i * 3 + 1];
-		struct snd_soc_dai_link_component *plat = &comps[i * 3 + 2];
-		struct snd_soc_dai_link *link = &links[i];
+		const char *i2s_name = sky1_hdmi_topology[i].i2s_name;
+		struct snd_soc_dai_link_component *cpu, *codec, *plat;
+		struct snd_soc_dai_link *link;
+		struct device *i2s_dev;
+
+		/* Skip links whose I2S platform device doesn't exist */
+		i2s_dev = bus_find_device_by_name(&platform_bus_type, NULL,
+						  i2s_name);
+		if (!i2s_dev) {
+			dev_info(dev, "I2S device %s not present, skipping\n",
+				 i2s_name);
+			continue;
+		}
+		put_device(i2s_dev);
+
+		cpu = &comps[num_links * 3];
+		codec = &comps[num_links * 3 + 1];
+		plat = &comps[num_links * 3 + 2];
+		link = &links[num_links];
 
 		/* CPU DAI: I2S MC playback */
-		cpu->name = sky1_hdmi_topology[i].i2s_name;
+		cpu->name = i2s_name;
 		cpu->dai_name = "i2s-mc-aif1";
 
 		/* Codec DAI: hdmi-audio-codec */
@@ -726,16 +742,19 @@ int cix_card_parse_acpi(struct cix_asoc_card *priv)
 		link->trigger_stop = SND_SOC_TRIGGER_ORDER_LDC;
 
 		/* HDMI/DP output jack detection */
-		link_info[i].jack_pin[JACK_DPOUT].pin =
-			devm_kasprintf(dev, GFP_KERNEL, "HDMI/DP,pcm=%d", i);
-		if (!link_info[i].jack_pin[JACK_DPOUT].pin)
+		link_info[num_links].jack_pin[JACK_DPOUT].pin =
+			devm_kasprintf(dev, GFP_KERNEL, "HDMI/DP,pcm=%d",
+				       num_links);
+		if (!link_info[num_links].jack_pin[JACK_DPOUT].pin)
 			return -ENOMEM;
-		link_info[i].jack_pin[JACK_DPOUT].mask = SND_JACK_LINEOUT;
-		link_info[i].jack_det_mask = JACK_MASK_DPOUT;
+		link_info[num_links].jack_pin[JACK_DPOUT].mask = SND_JACK_LINEOUT;
+		link_info[num_links].jack_det_mask = JACK_MASK_DPOUT;
+
+		num_links++;
 	}
 
 	card->dai_link = links;
-	card->num_links = SKY1_HDMI_LINKS;
+	card->num_links = num_links;
 	card->suspend_post = cix_card_suspend_post;
 	card->resume_pre = cix_card_resume_pre;
 	priv->link_info = link_info;
