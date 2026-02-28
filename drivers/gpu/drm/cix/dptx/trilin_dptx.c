@@ -2766,8 +2766,15 @@ static void trilin_dp_hpd_event_work_func(struct work_struct *work)
 	if (dp->drm[0])
 		drm_helper_hpd_irq_event(dp->drm[0]);
 
-	DP_DEBUG("dp audio plugin status = %d\n", dp->plugin);
-	dptx_audio_handle_plugged_change(dp_audio, dp->plugin);
+	/* Audio plugged notification is deferred to
+	 * trilin_connector_update_modes(), after the ELD has been
+	 * populated from EDID.  Firing it here would race — the
+	 * connector probe triggered above is asynchronous.
+	 *
+	 * For unplug, notify immediately so hdmi-codec can clear state.
+	 */
+	if (!dp->plugin)
+		dptx_audio_handle_plugged_change(dp_audio, false);
 
 	cix_hdcp_hpd_event_process(&dp->hdcp, dp->plugin);
 }
