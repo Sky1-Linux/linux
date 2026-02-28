@@ -266,7 +266,7 @@ CACHE_FAIL:
 	return ret;
 }
 
-void aipu_mm_hold_tcb_buf_free(struct aipu_memory_manager *mm)
+static void aipu_mm_hold_tcb_buf_free(struct aipu_memory_manager *mm)
 {
 	struct aipu_hold_tcb_buf *htbuf_head = mm->hold_tcb_head;
 	struct aipu_hold_tcb_buf *htbuf = NULL;
@@ -1615,7 +1615,7 @@ int aipu_mm_free(struct aipu_memory_manager *mm, struct aipu_buf_desc *buf, stru
 	return ret;
 }
 
-void tensor_dcache_inval_poc(void *start, void *end) {
+static void tensor_dcache_inval_poc(void *start, void *end) {
     uintptr_t line_size, addr_start, addr_end, tmp;
 
     line_size = cache_line_size();
