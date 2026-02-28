@@ -2591,6 +2591,21 @@ int trilin_dp_handle_connect(struct trilin_dp *dp, bool send_notification)
 
 	rc = trinlin_dp_panel_read_sink_caps(dp);
 	/*
+	 * On cold-plug (display connected after boot), the sink may not be
+	 * ready for AUX transactions immediately.  The DP spec allows up to
+	 * 500ms for a sink to power up, but some bridges/monitors need more.
+	 * Retry with increasing delays before giving up.
+	 */
+	if (rc == -ETIMEDOUT) {
+		int retries;
+
+		for (retries = 0; retries < 5 && rc == -ETIMEDOUT; retries++) {
+			DP_INFO("sink not ready, retry %d/5\n", retries + 1);
+			msleep(100);
+			rc = trinlin_dp_panel_read_sink_caps(dp);
+		}
+	}
+	/*
 	 * ETIMEDOUT --> cable may have been removed
 	 * ENOTCONN --> no downstream device connected
 	 */
